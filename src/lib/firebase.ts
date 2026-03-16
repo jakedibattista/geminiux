@@ -18,6 +18,13 @@ const firebaseConfig = {
   measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID,
 };
 
+if (!firebaseConfig.apiKey) {
+  throw new Error(
+    'NEXT_PUBLIC_FIREBASE_API_KEY is not set. ' +
+    'Add it to your .env.local (dev) or Vercel environment variables (prod).'
+  );
+}
+
 // Initialize Firebase only once
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 const auth = getAuth(app);
