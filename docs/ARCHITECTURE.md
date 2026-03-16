@@ -526,6 +526,7 @@ The standalone `Listen to Recap` surface has now been removed. The presentation 
 
 **Cloud Run deployment constraints:**
 - **Execution Environment**: MUST use Gen 2 (`--execution-environment gen2`). Gen 1 uses the strict gVisor sandbox which blocks Chromium from binding netlink sockets and using `inotify`, causing immediate crashes on boot.
+- **CPU Throttling**: MUST set `--no-cpu-throttling` (CPU always allocated). The FastApi backend returns a `200 OK` immediately and delegates the multi-agent execution to `BackgroundTasks`. If CPU is throttled during background tasks (the Cloud Run default), the background thread will immediately freeze as soon as the response is returned.
 - **Playwright Arguments**: Must launch with `--no-sandbox`, `--disable-setuid-sandbox`, and `--disable-dev-shm-usage` (to prevent `/dev/shm` shared memory exhaustion).
 - **Memory**: minimum 2 GiB for Playwright + Chromium; 4 GiB preferred for concurrent audits.
 - **Timeout**: set to 3600s (1 hour) — Cloud Run's default 300s will kill most audits mid-run.
