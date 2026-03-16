@@ -1,14 +1,8 @@
-# Agent Handoff & Architecture Notes
+# Architecture Reference
 
-Welcome, future AI Agent. Read this fully before touching any code.
+**AuditMySite** is a web app that runs multiple AI personas against a user-provided URL, streams findings live to the UI, and synthesises a consolidated UX audit report with a narrated slide presentation. Built for the Gemini Live Agent Challenge (Track 3: UI Navigator).
 
----
-
-## Project Overview
-
-**AuditMySite** is a web app that runs multiple AI personas (backed by Playwright-controlled headless browsers and Gemini models) against a user-provided URL, streams findings live to the UI, and synthesises a consolidated UX audit report. Built for the Gemini Live Agent Challenge (Track 3: UI Navigator).
-
-**Critical design decision:** All agents are **content and presentation auditors only**. The functional `QA Agent` was removed in March 2026 because the architecture is pivoting to a static "Map-Reduce" screenshot review model, which cannot reliably test interactivity. See "Agent Scope Philosophy" below.
+**Core design decision:** All agents are **content and presentation auditors only**. The functional `QA Agent` was removed in March 2026 because static screenshot review cannot reliably test interactivity — headless browsers produce too many false positives for CTA clicks, embedded video, and external deep links.
 
 ---
 
@@ -27,15 +21,17 @@ Welcome, future AI Agent. Read this fully before touching any code.
   ```
   asyncio.gather (run_audit_background in main.py)
   ├── run_crawler_agent (crawler.py) [Dual BrowserDriver: Desktop & Mobile]
-  │   └── Captures ~4 pages x 3 screenshots each for BOTH viewports
+  │   └── Captures ~4 pages, scrolls N frames, stitches into 1 composite PNG per page/device
+  │
+  ├── run_screenshot_reviewer [gemini-2.5-flash]
+  │   └── Vision QA gate — rejects blank/messy screenshots before personas see them
   │
   ├── run_persona_agent (persona 1) [gemini-3.1-pro-preview]
-  │   └── Pure batch multimodal review of device-specific screenshots
+  │   └── Receives 1 composite image per page; must log ≥2 findings per image
   │
   ├── run_persona_agent (persona 2) [gemini-3.1-pro-preview]
   │   └── ...
   │
-  ├── run_screenshot_reviewer [gemini-2.5-flash]
   └── run_native_consolidator [gemini-2.5-pro]
   ```
 - **Crawler:** `agent-backend/agents/crawler.py` handles the navigation phase. It spins up two parallel `BrowserDriver` instances (1280x800 desktop and 390x844 mobile) to ensure every page is captured for both device types.
@@ -132,12 +128,15 @@ Users can provide `loginUrl`, `loginEmail`, and `loginPassword` in the new audit
 ## Screenshot System
 
 ### How It Works
-1. **Crawl**: The `run_crawler_agent` in `crawler.py` navigates the site using two parallel `BrowserDriver` instances (Desktop and Mobile). It captures ~4 pages with 2-3 screenshots each for BOTH viewports.
-2. **Review**: `screenshot_reviewer.py` reviews all captured screenshots for visual quality.
-3. **Filter**: Rejected screenshots are marked but preserved in Firestore for reference.
-4. **Distribute**: Persona agents (`native_persona.py`) receive only the screenshots matching their `deviceType` (or falling back to desktop if mobile is missing).
-5. **Consolidate**: The consolidator synthesizes findings.
-6. **Results**: Review results are stored in `mediaArtifacts.screenshotReview.reviews` and within each persona report's metadata.
+1. **Crawl**: `crawler.py` runs two parallel `BrowserDriver` instances (Desktop 1280×800 and Mobile 390×844). For each page, it captures N viewport frames while scrolling (3 for the homepage, 2 for subpages) and **stitches them into a single composite PNG** using Pillow. One composite URL is stored per page per device.
+2. **Vision QA**: `screenshot_reviewer.py` reviews every composite for visual quality (blank frames, loading skeletons, broken device shells) before personas see anything.
+3. **Filter**: Rejected screenshots are marked; their URLs are nullified on findings but the raw `crawledPages` entry is preserved as a last-resort fallback.
+4. **Distribute**: Persona agents receive only the composites matching their `deviceType`.
+5. **Consolidate**: The consolidator synthesizes evidence-backed findings into the final report.
+6. **Results**: Review metadata is stored in `mediaArtifacts.screenshotReview` and within each persona's Firestore doc.
+
+### Why One Composite Per Page (not multiple scrolled shots)
+The persona agent calls `log_issue` with an explicit `screenshot_url`. When multiple scrolled images existed for the same page URL, the model had to recall the exact opaque Firebase Storage token for whichever viewport frame its observation came from — it almost never got it right, causing all findings to pile up on the first screenshot and leaving the others blank. Stitching into one composite per page gives the model exactly one URL to cite, so every finding for that page correctly attaches to the full-page visual.
 
 ### Screenshot-to-Finding Grouping (important)
 Findings are mapped to screenshots through a prioritized fallback chain:
@@ -544,3 +543,30 @@ The standalone `Listen to Recap` surface has now been removed. The presentation 
 - **Live Feed UI Cleanup:** Removed the "Audit Snapshot" (collapsible status/coverage metrics) from each agent's card in the Live Agent Feed. This keeps the live experience focused on findings rather than internal state.
 - **"Eligible Screenshot" Feedback Requirement:** Persona agents (`native_persona.py`) are now required to provide at least one first-person finding (positive or negative) for **every single screenshot** they receive. This ensures that the user's "Screenshots" tab is populated with relevant, context-aware advice for every visual artifact of the audit.
 - **Vision Model Pre-Filtering:** A dedicated `review_urls` pass (using `gemini-2.5-flash`) now runs immediately after the crawler captures screenshots. This phase identifies and rejects "messy" screenshots (blank images, empty frames, loading skeletons) *before* persona agents see them, ensuring the final report is based only on "presentation-ready" evidence.
+
+### Mar 16, 2026 — TTS Bug Fix: `response_modalities` Must Be Uppercase
+**The Problem:** Presentation audio generation was silently failing with `"Gemini TTS response did not include audio bytes."` The error was caught and logged but the presentation continued without any slide narration.
+
+**Root Cause:** `_generate_tts_response` in `audit_recap.py` passed `response_modalities=["audio"]` (lowercase). The Gemini TTS API requires `["AUDIO"]` (uppercase). Lowercase silently caused the model to return a response with no audio parts at all.
+
+**The Fix:** Changed to `response_modalities=["AUDIO"]`. Also updated the retry loop in `_generate_tts_audio_asset` to retry on `"did not include audio bytes"` errors in addition to HTTP 500/429 errors, since TTS preview models can transiently return incomplete responses.
+
+### Mar 16, 2026 — Persona Agents Were Too Shallow (≥2 Findings Per Screenshot Enforced)
+**The Problem:** Despite the "at least once per screenshot" instruction, persona agents interpreted the minimum as permission to stop — producing one generic finding per screenshot and moving on.
+
+**The Fix:** Three changes to `native_persona.py`:
+1. Minimum raised from "at least once" to **"MINIMUM OF 2 TIMES"** per screenshot, with explicit instructions to reference specific copy, button labels, and section names visible in the image.
+2. Temperature raised from `0.0` to `0.5` so quotes are more natural and varied across screenshots.
+3. Each screenshot's inline prompt label now includes `"Log at least 2 findings for this screenshot before continuing"` — the reminder is embedded right before each image in the prompt, not just in the system instruction.
+
+Two new evaluation categories were also added to the system instruction: **content completeness** and **messaging consistency**.
+
+### Mar 16, 2026 — Composite Screenshots Eliminate Finding-to-Image Mismatch
+**The Problem:** The crawler stored 3 separate scrolled screenshots for the homepage and 2 for each subpage. All shared the same `page_url`. When the persona agent called `log_issue`, it needed to cite the exact Firebase Storage token URL for whichever scroll frame its observation came from. The model almost never recalled the correct token, causing all findings for a page to pile up on the first screenshot URL and leaving the others blank in the UI.
+
+**The Fix:** `crawler.py` now uses Pillow (`PIL`) to stitch the N viewport frames into a single composite PNG before uploading. Each page now has exactly one URL per device. The model can only cite that one URL, so every finding for the page attaches to the composite image showing the full scroll content.
+
+- Homepage composites: 3 frames × 1280×800 = 1280×2400 desktop, 390×844×3 = 390×2532 mobile
+- Subpage composites: 2 frames — 1280×1600 desktop, 390×1688 mobile
+- After capture, the driver scrolls back to top so subsequent page navigation is unaffected
+- `Pillow` added to `requirements.txt`

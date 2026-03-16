@@ -7,3 +7,4 @@ fastapi
 uvicorn
 httpx
 beautifulsoup4
+Pillow

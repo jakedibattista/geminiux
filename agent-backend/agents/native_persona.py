@@ -191,7 +191,7 @@ async def run_persona_agent(persona_id: str, audit_id: str, target_url: str, cra
     You are an AI Content & UX Researcher acting as this persona: {persona_desc}
 
     You are reviewing a set of screenshots captured from {target_url}. 
-    Imagine you are experiencing this website for the first time.
+    Imagine you are experiencing this website for the first time as this specific persona.
 
     ══════════════════════════════════════════════════════
     YOUR ONLY JOB IS TO EVALUATE CONTENT AND PRESENTATION.
@@ -200,41 +200,50 @@ async def run_persona_agent(persona_id: str, audit_id: str, target_url: str, cra
     Write short quotes such as "I still don't understand what this product does" or "I feel reassured by the simple pricing copy."
     Do NOT write analyst prose like "The homepage lacks clarity" or "Visual hierarchy is weak."
     Avoid generic quotes. Your quotes must reflect this persona's unique needs, frustrations, and decision criteria.
+    Reference SPECIFIC elements you see: exact headlines, button labels, section names, layout choices, image content.
 
     WHAT YOU ARE HERE TO EVALUATE:
     ✓ Copy clarity — Is the headline and value proposition immediately clear for your persona?
-    ✓ Missing information — What questions does your persona have that the page fails to answer?
+    ✓ Missing information — What specific questions does your persona have that the page fails to answer?
     ✓ Information architecture — Is the content organized in a way that makes sense for this persona's goals?
     ✓ Visual hierarchy — Is the most important content visually prominent and easy to scan?
     ✓ Readability — Is the text readable? Is the layout cluttered or overwhelming?
     ✓ Emotional journey — Does the content make your persona feel confident, curious, confused, or skeptical?
+    ✓ Content completeness — What is missing that this persona would need to make a decision?
+    ✓ Messaging consistency — Do different sections of the page contradict each other or feel disjointed?
 
     WORKFLOW:
-    1. Review all the screenshots provided carefully as your persona would.
-    2. For EVERY screenshot provided, you MUST call `log_issue` at least once to log a specific finding (positive or negative) that reflects your persona's unique needs, frustrations, or decision criteria. 
-    3. You must provide the `page_url` and the exact `screenshot_url` you are commenting on.
-    4. Call `finish` once you have logged findings for ALL screenshots. Keep the summary to 2-3 sentences.
+    1. Study each screenshot carefully. Read the actual copy. Notice what is prominent, what is buried, what is missing.
+    2. For EVERY screenshot provided, you MUST call `log_issue` a MINIMUM OF 2 TIMES with distinct, specific findings.
+       - Each finding must address a different element or concern visible in that screenshot.
+       - Do NOT repeat the same observation twice in different words.
+       - Be specific: quote actual text you see, name actual buttons or sections, describe actual layout problems.
+    3. You must provide the `page_url` and the exact `screenshot_url` for every finding.
+    4. Call `finish` ONLY after you have logged at least 2 findings per screenshot for ALL screenshots.
+
+    THOROUGHNESS IS REQUIRED. A lazy review with only one generic finding per screenshot is a failure.
+    Real users form multiple impressions from a single page. So should you.
     """
 
         client = genai.Client()
         chat = client.aio.chats.create(
-            model="gemini-3.1-pro-preview", # Upgrading to 3.1 Pro for high-intelligence batch review
+            model="gemini-3.1-pro-preview",
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 tools=get_browser_tools(),
-                temperature=0.0
+                temperature=0.5,
             )
         )
 
-        prompt_parts = ["Please review the following pages and their screenshots:\n\n"]
+        prompt_parts = ["Please review the following pages and their screenshots. For EVERY screenshot, log at least 2 distinct findings via `log_issue` before moving on.\n\n"]
         for page in crawled_pages:
             prompt_parts.append(f"Page URL: {page['url']}\nLabel: {page.get('label', 'Unknown')}\n")
             # Use device-specific screenshots if available
             urls = page.get(screenshot_key, page.get("screenshots", []))
-            for url in urls:
+            for i, url in enumerate(urls, start=1):
                 part = parts_by_url.get(url)
                 if part:
-                    prompt_parts.append(f"Screenshot URL: {url}\n")
+                    prompt_parts.append(f"Screenshot {i} of {len(urls)} for this page — URL: {url}\nLog at least 2 findings for this screenshot before continuing.\n")
                     prompt_parts.append(part)
                 else:
                     prompt_parts.append(f"(Image failed to load): {url}\n")
