@@ -886,7 +886,7 @@ export default function AuditPage({ params }: { params: Promise<{ auditId: strin
 
       // 2. Also consider the latest screenshot
       if (isImageLikeUrl(report.latestScreenshot) && report.latestScreenshotPage) {
-        const imgUrl = report.latestScreenshot;
+        const imgUrl = report.latestScreenshot!;
         const existing = pageMap.get(imgUrl);
         if (!existing) {
           pageMap.set(imgUrl, {

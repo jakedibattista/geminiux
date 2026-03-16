@@ -24,7 +24,7 @@
   │   └── Captures ~4 pages, scrolls N frames, stitches into 1 composite PNG per page/device
   │
   ├── run_screenshot_reviewer [gemini-2.5-flash]
-  │   └── Vision QA gate — rejects blank/messy screenshots before personas see them
+  │   └── Vision QA pass — scores founder-presentation quality and stores review metadata
   │
   ├── run_persona_agent (persona 1) [gemini-3.1-pro-preview]
   │   └── Receives 1 composite image per page; must log ≥2 findings per image
@@ -36,7 +36,7 @@
   ```
 - **Crawler:** `agent-backend/agents/crawler.py` handles the navigation phase. It spins up two parallel `BrowserDriver` instances (1280x800 desktop and 390x844 mobile) to ensure every page is captured for both device types.
 - **Reviewers:** `agent-backend/agents/native_persona.py` is now a pure multimodal reviewer. It no longer controls a browser. It receives the crawled screenshots and selects the set (desktop or mobile) that matches the persona's `deviceType`.
-- **Screenshot QA:** `agent-backend/agents/screenshot_reviewer.py` reviews every screenshot *before* persona execution. It rejects "messy" artifacts (blank images, empty frames, placeholders), stores results in `mediaArtifacts.screenshotReview`, and filters the set of URLs persona agents will receive.
+- **Screenshot QA:** `agent-backend/agents/screenshot_reviewer.py` reviews every screenshot *before* persona execution. It flags "messy" artifacts (blank images, empty frames, placeholders) and stores results in `mediaArtifacts.screenshotReview`, but it no longer filters the set of URLs persona agents receive.
 
 ---
 
@@ -129,9 +129,9 @@ Users can provide `loginUrl`, `loginEmail`, and `loginPassword` in the new audit
 
 ### How It Works
 1. **Crawl**: `crawler.py` runs two parallel `BrowserDriver` instances (Desktop 1280×800 and Mobile 390×844). For each page, it now captures viewport frames in a footer-aware loop, scrolling until the footer or page bottom is visible, capped at 7 frames, and **stitches them into a single composite PNG** using Pillow. One composite URL is stored per page per device.
-2. **Vision QA**: `screenshot_reviewer.py` reviews every composite for visual quality (blank frames, loading skeletons, broken device shells) before personas see anything.
-3. **Filter**: Rejected screenshots are marked; their URLs are nullified on findings but the raw `crawledPages` entry is preserved as a last-resort fallback.
-4. **Distribute**: Persona agents receive only the composites matching their `deviceType`.
+2. **Vision QA**: `screenshot_reviewer.py` reviews every composite for visual quality (blank frames, loading skeletons, broken device shells) and stores founder-presentation suitability in `mediaArtifacts.screenshotReview`.
+3. **Distribute**: Persona agents receive the full crawled set matching their `deviceType`, even if some screenshots are too messy for the presentation layer.
+4. **Presentation filtering**: The review pass is advisory for evidence presentation and slide generation, not a hard gate on persona coverage.
 5. **Consolidate**: The consolidator synthesizes evidence-backed findings into the final report.
 6. **Results**: Review metadata is stored in `mediaArtifacts.screenshotReview` and within each persona's Firestore doc.
 
@@ -146,7 +146,7 @@ Findings are mapped to screenshots through a prioritized fallback chain:
 3. `report.latestScreenshot` — if it belongs to the same page
 4. `crawledPageKeyToImgUrl[pageKey]` — the first raw crawled screenshot for that page (last resort)
 
-The last-resort fallback is important because the screenshot reviewer nullifies both `finding.screenshotUrl` and the matching `pageScreenshots` entry when it rejects a screenshot. Without step 4, those findings would be silently dropped and the screenshot would render with no persona quotes at all. The raw `crawledPages` data is never filtered by the reviewer, so it always provides a stable fallback image for the correct page.
+The last-resort fallback is important because the screenshot reviewer can still reject a screenshot for presentation use even when a persona logged valid findings against it. Without step 4, those findings would be silently dropped and the screenshot would render with no persona quotes at all. The raw `crawledPages` data is never filtered by the reviewer, so it always provides a stable fallback image for the correct page.
 
 There is now an additional guardrail on top of that mapping chain: only image-like URLs are allowed to flow through the screenshot pipeline. If a finding contains a page URL such as `https://example.com/about` instead of a Firebase image URL, the backend and frontend both reject it as screenshot evidence rather than trying to render a webpage as an `<img>`.
 
@@ -157,7 +157,7 @@ The dedicated screenshot reviewer is intentionally stricter than the browsing ag
 - free of blank or obviously broken media / device frames
 - polished enough to reuse in the founder presentation
 
-If a screenshot looks like a headless rendering artifact, missing gallery image, empty device shell, broken embed, or generally poor slide material, it is rejected and downstream consumers must fall back to another approved screenshot or generated filler art.
+If a screenshot looks like a headless rendering artifact, missing gallery image, empty device shell, broken embed, or generally poor slide material, it is rejected for presentation use and downstream consumers must fall back to another approved screenshot or generated filler art. Persona agents can still inspect it as part of the live audit so coverage is not artificially narrowed to the few prettiest pages.
 
 ### Important Limitation
 Screenshot capture is still coarse at the storage layer: `BrowserDriver.create_screenshot_upload()` dedupes by normalized page URL. That means the reviewer can reject bad screenshots, but it cannot recover a better section-specific screenshot if the system only stored one image for that page. The next reliability step would be section-aware screenshot storage rather than page-only reuse.

@@ -82,7 +82,12 @@ class BrowserDriver:
             args=[
                 "--disable-blink-features=AutomationControlled", 
                 "--disable-gpu",
-                "--autoplay-policy=no-user-gesture-required"
+                "--autoplay-policy=no-user-gesture-required",
+                # Required for Google Cloud Run
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--single-process",
             ],
             headless=True
         )

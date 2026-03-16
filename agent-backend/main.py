@@ -84,7 +84,9 @@ async def run_audit_background(audit_id: str, url: str, persona_ids: list, user_
         if not crawled_pages:
             raise Exception("Crawler finished but returned no screenshots.")
 
-        # 2. Pre-filter screenshots using the Vision model to ensure only "eligible" ones are used
+        # 2. Review screenshots for presentation quality.
+        # Keep this separate from persona evidence so the live audit can still cover
+        # every crawled page even when a screenshot is too messy for the founder deck.
         from agents.screenshot_reviewer import review_urls
         all_urls = []
         for p in crawled_pages:
@@ -94,7 +96,7 @@ async def run_audit_background(audit_id: str, url: str, persona_ids: list, user_
         print(f"[Audit {audit_id}] Reviewing {len(all_urls)} screenshots for evidence quality...")
         reviews_by_url = await review_urls(audit_id, all_urls)
         
-        # Mark and filter the screenshots in crawled_pages
+        # Keep a filtered view only for reviewer stats / future presentation logic.
         filtered_crawled_pages = []
         for page in crawled_pages:
             approved_desktop = [u for u in page.get("desktop_screenshots", []) if reviews_by_url.get(u, {}).get("approved")]
@@ -110,13 +112,15 @@ async def run_audit_background(audit_id: str, url: str, persona_ids: list, user_
             
         print(f"[Audit {audit_id}] Filtered out {len(all_urls) - sum(len(p['desktop_screenshots']) + len(p['mobile_screenshots']) for p in filtered_crawled_pages)} messy screenshots.")
 
-        # 3. Run persona agents in parallel, passing ONLY the eligible crawled pages
+        # 3. Run persona agents in parallel using the full crawled set.
+        # The reviewer is now advisory for presentation quality, not a hard gate
+        # on what evidence personas are allowed to inspect.
         from agents.native_persona import run_persona_agent
         
         tasks = []
         for pid in persona_ids:
             custom_data = next((p for p in custom_personas if p.get('id') == pid), None)
-            tasks.append(run_persona_agent(pid, audit_id, url, filtered_crawled_pages, custom_data))
+            tasks.append(run_persona_agent(pid, audit_id, url, crawled_pages, custom_data))
             
         print(f"[Audit {audit_id}] Starting {len(tasks)} persona reviewers concurrently...")
         await asyncio.gather(*tasks, return_exceptions=True)

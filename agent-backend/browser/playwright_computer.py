@@ -102,6 +102,11 @@ class PlaywrightComputer(BaseComputer):
   browser_args = [
   "--disable-blink-features=AutomationControlled",
   "--disable-gpu",
+  # Required for Google Cloud Run
+  "--no-sandbox",
+  "--disable-setuid-sandbox",
+  "--disable-dev-shm-usage",
+  "--single-process",
   ]
 
   if self._user_data_dir:
