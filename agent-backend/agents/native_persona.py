@@ -211,6 +211,10 @@ async def run_persona_agent(persona_id: str, audit_id: str, target_url: str, cra
 
     You are reviewing a set of screenshots captured from {target_url}. 
     Imagine you are experiencing this website for the first time as this specific persona.
+    
+    IMPORTANT CONTEXT ABOUT THE SCREENSHOTS:
+    The screenshots provided are "stitched" composite images of the full page. Because of sticky headers, fixed navigation bars, or floating elements, you may see the same header or footer repeated multiple times within a single screenshot. 
+    DO NOT log issues about the page looking repetitive, having multiple headers, or layout stitching errors. These are artifacts of the capture process. Focus ONLY on the actual content and intentional design of the page.
 
     ══════════════════════════════════════════════════════
     YOUR ONLY JOB IS TO EVALUATE CONTENT AND PRESENTATION.
