@@ -77,54 +77,67 @@ class BrowserDriver:
         return await self._page_has_login_form()
 
     async def initialize(self):
-        self.playwright = await async_playwright().start()
-        self.browser = await self.playwright.chromium.launch(
-            args=[
-                "--disable-blink-features=AutomationControlled", 
-                "--disable-gpu",
-                "--autoplay-policy=no-user-gesture-required",
-                # Required for Google Cloud Run
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--single-process",
-            ],
-            headless=True
-        )
-        
-        context_args = {
-            "viewport": {"width": self.screen_size[0], "height": self.screen_size[1]},
-            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-        }
-        if self.screen_size[0] < 600:
-            context_args["is_mobile"] = True
-            context_args["has_touch"] = True
-            context_args["user_agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1"
+        try:
+            self.playwright = await async_playwright().start()
+            self.browser = await self.playwright.chromium.launch(
+                args=[
+                    "--disable-blink-features=AutomationControlled", 
+                    "--disable-gpu",
+                    "--autoplay-policy=no-user-gesture-required",
+                    # Required for Google Cloud Run
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--single-process",
+                ],
+                headless=True
+            )
             
-        self.context = await self.browser.new_context(**context_args)
-        self.page = await self.context.new_page()
-        
-        if self.auth:
-            await self._login()
-
-        if not (self.auth and self.auth_succeeded):
-            print(f"[{self.persona_id}] Navigating to {self.initial_url}")
-            try:
-                await self.page.goto(self.initial_url, wait_until="networkidle", timeout=20000)
-            except Exception as e:
-                try:
-                    print(f"[{self.persona_id}] Warning: networkidle timeout on initial goto: {e}, falling back to domcontentloaded")
-                    await self.page.goto(self.initial_url, wait_until="domcontentloaded", timeout=15000)
-                except Exception as e2:
-                    print(f"[{self.persona_id}] Error: Initial navigation failed entirely: {e2}")
-        else:
-            print(f"[{self.persona_id}] Login succeeded; staying on authenticated page {self.page.url}")
+            context_args = {
+                "viewport": {"width": self.screen_size[0], "height": self.screen_size[1]},
+                "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            }
+            if self.screen_size[0] < 600:
+                context_args["is_mobile"] = True
+                context_args["has_touch"] = True
+                context_args["user_agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1"
                 
-        if "chrome-error://" in self.page.url:
-            print(f"[{self.persona_id}] Hit chrome-error on startup. Site is actively blocking us.")
+            self.context = await self.browser.new_context(**context_args)
+            self.page = await self.context.new_page()
             
-        await self.page.wait_for_timeout(4000)
-        await self.create_screenshot_upload(page_url=self.page.url, persist_for_page=False)
+            if self.auth:
+                await self._login()
+
+            if not (self.auth and self.auth_succeeded):
+                print(f"[{self.persona_id}] Navigating to {self.initial_url}")
+                try:
+                    await self.page.goto(self.initial_url, wait_until="networkidle", timeout=20000)
+                except Exception as e:
+                    try:
+                        print(f"[{self.persona_id}] Warning: networkidle timeout on initial goto: {e}, falling back to domcontentloaded")
+                        await self.page.goto(self.initial_url, wait_until="domcontentloaded", timeout=15000)
+                    except Exception as e2:
+                        print(f"[{self.persona_id}] Error: Initial navigation failed entirely: {e2}")
+                        # Don't crash the whole agent if the site is misbehaving/slow
+                        # Instead, let the agent continue and naturally report that the page couldn't be loaded
+                        return
+            else:
+                print(f"[{self.persona_id}] Login succeeded; staying on authenticated page {self.page.url}")
+                    
+            if "chrome-error://" in self.page.url:
+                print(f"[{self.persona_id}] Hit chrome-error on startup. Site is actively blocking us.")
+                
+            try:
+                await self.page.wait_for_timeout(4000)
+                await self.create_screenshot_upload(page_url=self.page.url, persist_for_page=False)
+            except Exception as e:
+                print(f"[{self.persona_id}] Warning: Error during startup settle/screenshot: {e}")
+                
+        except Exception as e:
+            # Clean up what we can before bubbling the error up
+            print(f"[{self.persona_id}] Failed during initialize: {e}")
+            await self.close()
+            raise e
         
     async def _login(self):
         login_url = self.auth.get('loginUrl')
@@ -572,6 +585,17 @@ class BrowserDriver:
         return f"Navigated to {url}"
 
     async def close(self):
-        if self.context: await self.context.close()
-        if self.browser: await self.browser.close()
-        if self.playwright: await self.playwright.stop()
+        try:
+            if self.context: await self.context.close()
+        except Exception:
+            pass
+            
+        try:
+            if self.browser: await self.browser.close()
+        except Exception:
+            pass
+            
+        try:
+            if self.playwright: await self.playwright.stop()
+        except Exception:
+            pass

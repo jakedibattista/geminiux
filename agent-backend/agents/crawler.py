@@ -74,7 +74,8 @@ async def _capture_page_screenshots(
     try:
         await driver.page.evaluate("() => window.scrollTo(0, 0)")
         await asyncio.sleep(0.5)
-    except Exception:
+    except Exception as e:
+        print(f"[Crawler {audit_id}] Initial scroll failed on {url}: {e}")
         pass
 
     last_scroll_y = -1
@@ -84,6 +85,8 @@ async def _capture_page_screenshots(
             frames.append(png_bytes)
         except Exception as e:
             print(f"[Crawler {audit_id}] Frame capture error on {url} (frame {i + 1}): {e}")
+            # If screenshot fails, browser context is likely dead
+            break
 
         try:
             metrics = await driver.page.evaluate(
@@ -249,4 +252,9 @@ async def run_crawler_agent(audit_id: str, target_url: str, auth: dict = None):
         return {"status": "error", "reason": str(e)}
 
     finally:
-        await asyncio.gather(desktop_driver.close(), mobile_driver.close())
+        # Close the drivers safely so one failure doesn't prevent the other from closing
+        await asyncio.gather(
+            desktop_driver.close(), 
+            mobile_driver.close(),
+            return_exceptions=True
+        )
