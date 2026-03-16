@@ -364,6 +364,19 @@ def _attach_supporting_screenshots(slides: list[dict], persona_reports: dict) ->
             all_raw_screenshots.append(u_latest)
             seen_raw.add(u_latest)
 
+    # If persona_reports were built without pageScreenshots/latestScreenshot (the common
+    # case when built from main.py), fall back to collecting URLs from findings directly.
+    # This ensures the cyclic reuse path below always has a pool to draw from.
+    if not all_raw_screenshots:
+        for report in persona_reports.values():
+            for finding in report.get("findings", []) or []:
+                if not isinstance(finding, dict):
+                    continue
+                u = _clean_line(finding.get("screenshotUrl"))
+                if u and u not in seen_raw:
+                    all_raw_screenshots.append(u)
+                    seen_raw.add(u)
+
     used_urls: set[str] = set()
     evidence_index = 0
     raw_index = 0
