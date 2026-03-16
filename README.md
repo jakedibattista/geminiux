@@ -142,17 +142,40 @@ service firebase.storage {
 
 ## Deploying to Production
 
-### Agent Backend (Cloud Run)
+Live deployment (reference):
+- **Frontend:** https://geminiux-buddy-tech.vercel.app
+- **Backend:** https://audit-agent-403481904256.us-central1.run.app
+- **Repo:** https://github.com/jakedibattista/geminiux
 
-The backend needs at least **2 GiB memory** because Playwright runs Chromium inside the container.
+### Step 1 — Enable GCP APIs
+
+Do this once per project:
+```bash
+gcloud services enable \
+  secretmanager.googleapis.com \
+  cloudbuild.googleapis.com \
+  run.googleapis.com \
+  containerregistry.googleapis.com \
+  --project YOUR_PROJECT_ID
+```
+
+### Step 2 — Create secrets
+
+```bash
+echo -n "your-gemini-key" | gcloud secrets create gemini-api-key --data-file=- --project YOUR_PROJECT_ID
+echo -n "your-api-secret" | gcloud secrets create agent-api-secret --data-file=- --project YOUR_PROJECT_ID
+```
+
+### Step 3 — Build and deploy the agent backend (Cloud Run)
+
+Always pass `--project` explicitly — your default `gcloud` project may differ from your Firebase project.
 
 ```bash
 cd agent-backend
 
-# Build and push the image
-gcloud builds submit --tag gcr.io/YOUR_PROJECT_ID/audit-agent
+gcloud builds submit --tag gcr.io/YOUR_PROJECT_ID/audit-agent --project YOUR_PROJECT_ID
 
-# Deploy
+# Deploy with ALLOWED_ORIGINS=* initially; update after you have the Vercel URL
 gcloud run deploy audit-agent \
   --image gcr.io/YOUR_PROJECT_ID/audit-agent \
   --platform managed \
@@ -162,29 +185,52 @@ gcloud run deploy audit-agent \
   --concurrency 5 \
   --min-instances 1 \
   --allow-unauthenticated \
-  --set-env-vars "GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID,FIREBASE_STORAGE_BUCKET=YOUR_PROJECT_ID.firebasestorage.app,ALLOWED_ORIGINS=*" \
+  --project YOUR_PROJECT_ID \
+  --set-env-vars "GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID,GOOGLE_CLOUD_LOCATION=us-central1,FIREBASE_STORAGE_BUCKET=YOUR_PROJECT_ID.firebasestorage.app,ALLOWED_ORIGINS=*" \
   --set-secrets "GEMINI_API_KEY=gemini-api-key:latest,AGENT_API_SECRET=agent-api-secret:latest"
 ```
 
-Key settings:
-- `--min-instances 1` — audits run as background tasks after the HTTP response returns. If Cloud Run scales to zero, the container is killed mid-audit.
-- `--memory 2Gi` — minimum for Playwright + Chromium. Use 4 GiB if you see OOM crashes.
-- The default 300s request timeout is fine — `/api/run_audit` returns 202 immediately and the work runs as a `BackgroundTask`.
+### Step 4 — Grant IAM permissions
 
-After deploying the frontend, lock down CORS:
+The Cloud Run default service account (`PROJECT_NUMBER-compute@developer.gserviceaccount.com`) needs:
+
 ```bash
-gcloud run services update audit-agent \
-  --region us-central1 \
-  --update-env-vars "ALLOWED_ORIGINS=https://your-app.vercel.app"
+SA="PROJECT_NUMBER-compute@developer.gserviceaccount.com"
+PROJECT="YOUR_PROJECT_ID"
+
+# Access to secrets
+gcloud secrets add-iam-policy-binding gemini-api-key \
+  --member="serviceAccount:$SA" --role="roles/secretmanager.secretAccessor" --project $PROJECT
+gcloud secrets add-iam-policy-binding agent-api-secret \
+  --member="serviceAccount:$SA" --role="roles/secretmanager.secretAccessor" --project $PROJECT
+
+# Firebase and Vertex AI access
+gcloud projects add-iam-policy-binding $PROJECT \
+  --member="serviceAccount:$SA" --role="roles/datastore.user"
+gcloud projects add-iam-policy-binding $PROJECT \
+  --member="serviceAccount:$SA" --role="roles/storage.objectAdmin"
+gcloud projects add-iam-policy-binding $PROJECT \
+  --member="serviceAccount:$SA" --role="roles/aiplatform.user"
 ```
 
-### Frontend (Vercel)
+Key settings:
+- `--min-instances 1` — audits run as FastAPI `BackgroundTask` after the HTTP response returns. If Cloud Run scales to zero mid-audit, the container is killed. `min-instances 1` prevents this.
+- `--memory 2Gi` — minimum for Playwright + Chromium. Use 4 GiB if you see OOM crashes.
+- The 300s default request timeout is fine — `/api/run_audit` returns 202 immediately.
+
+### Step 5 — Deploy the frontend (Vercel)
 
 1. Push to GitHub
 2. Go to [vercel.com](https://vercel.com) → **Add New Project** → import your repo
-3. Add all variables from `.env.local.example` in the Vercel project settings
+3. Add all variables from `.env.local.example` in Vercel project settings
 4. Set `AGENT_BACKEND_URL` to your Cloud Run URL
-5. Deploy
+5. Deploy → get your Vercel URL → lock down CORS on Cloud Run:
+
+```bash
+gcloud run services update audit-agent \
+  --region us-central1 --project YOUR_PROJECT_ID \
+  --update-env-vars "ALLOWED_ORIGINS=https://your-app.vercel.app"
+```
 
 ---
 

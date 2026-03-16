@@ -561,6 +561,31 @@ The standalone `Listen to Recap` surface has now been removed. The presentation 
 
 Two new evaluation categories were also added to the system instruction: **content completeness** and **messaging consistency**.
 
+### Mar 16, 2026 — Public GitHub + GCP Cloud Run Deployment
+
+**Live URLs:**
+- Frontend: https://geminiux-buddy-tech.vercel.app
+- Backend (Cloud Run): https://audit-agent-403481904256.us-central1.run.app
+- Repo: https://github.com/jakedibattista/geminiux
+
+**Build fixes required for Vercel:**
+
+1. **TypeScript null guard** — `getPersonaProgress(report?: PersonaReport)` accessed `report.findingsCount` without checking if `report` was undefined. The `waiting` status guard did not satisfy the TypeScript compiler because `getPersonaStatus` itself accepts `undefined`. Fixed by adding `|| !report` to the early return guard.
+
+2. **Firebase Admin lazy init** — `firebase-admin.ts` called `admin.auth()` and `admin.firestore()` at module load time. Next.js evaluates all server-side modules during the build's static analysis phase, before any request exists. If `FIREBASE_SERVICE_ACCOUNT` is missing or unparseable, `initializeApp()` throws (silently caught), then `admin.auth()` throws "default Firebase app does not exist." Fixed by replacing the top-level exports with `Proxy` objects that call `getAdminApp()` only when a property is first accessed — which only happens inside a live request handler, not at build time.
+
+3. **`force-dynamic` on Firebase-dependent route groups** — Next.js 15 tries to statically pre-render all routes during the build, including client components. Pages in `/(auth)` (login, signup) and `/(protected)` (dashboard, audit) import the Firebase client SDK, which calls `initializeApp()` during static generation. If `NEXT_PUBLIC_FIREBASE_API_KEY` is undefined at build time, Firebase throws `auth/invalid-api-key`. Fixed by adding layout files to both route groups with `export const dynamic = 'force-dynamic'`, which opts the entire group out of static generation.
+
+**Docker build fix:**
+
+`playwright install-deps chromium` fails on `python:3.10-slim` (Debian Bookworm) because packages `ttf-unifont` and `ttf-ubuntu-font-family` no longer exist in that repo. Fixed by switching the Dockerfile base image to `mcr.microsoft.com/playwright/python:v1.52.0-jammy` — the official Playwright Python image, which ships with Chromium and all system dependencies pre-installed. No `install-deps` or `install chromium` steps needed.
+
+**GCP deployment gotchas:**
+- The default `gcloud` project may differ from the Firebase project. Always pass `--project YOUR_PROJECT_ID` explicitly to `gcloud builds submit` and `gcloud run deploy`.
+- Required APIs are not enabled by default: enable `secretmanager`, `cloudbuild`, `run`, `containerregistry` before first deploy.
+- The Cloud Run default compute service account (`PROJECT_NUMBER-compute@developer.gserviceaccount.com`) needs `secretmanager.secretAccessor` granted per-secret, plus `datastore.user`, `storage.objectAdmin`, and `aiplatform.user` at the project level for Firebase and Vertex AI access.
+- CORS is managed via the `ALLOWED_ORIGINS` env var. Deploy with `ALLOWED_ORIGINS=*` first, then update to the Vercel URL after the frontend is deployed.
+
 ### Mar 16, 2026 — Composite Screenshots Eliminate Finding-to-Image Mismatch
 **The Problem:** The crawler stored 3 separate scrolled screenshots for the homepage and 2 for each subpage. All shared the same `page_url`. When the persona agent called `log_issue`, it needed to cite the exact Firebase Storage token URL for whichever scroll frame its observation came from. The model almost never recalled the correct token, causing all findings for a page to pile up on the first screenshot URL and leaving the others blank in the UI.
 
