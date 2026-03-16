@@ -1267,13 +1267,19 @@ async def generate_audio_presentation(audit_id: str, audit_url: str, report_data
     try:
         ready_slides: list[dict] = []
         for index, slide in enumerate(presentation["slides"], start=1):
-            audio_bytes, mime_type = await _generate_tts_audio_asset(slide["narration"], DEFAULT_AUDIO_VOICE)
-            storage_path, download_url = await _upload_audio_artifact(
-                audit_id,
-                audio_bytes,
-                mime_type,
-                artifact_prefix=f"presentation_slide_{index}",
-            )
+            download_url, storage_path, mime_type = None, None, None
+            try:
+                audio_bytes, mime_type_result = await _generate_tts_audio_asset(slide["narration"], DEFAULT_AUDIO_VOICE)
+                storage_path, download_url = await _upload_audio_artifact(
+                    audit_id,
+                    audio_bytes,
+                    mime_type_result,
+                    artifact_prefix=f"presentation_slide_{index}",
+                )
+                mime_type = mime_type_result
+            except Exception as tts_error:
+                print(f"[AuditRecap] Presentation TTS generation failed for slide {index}: {tts_error}")
+                
             visual_storage_path, visual_download_url = None, None
             if not slide.get("screenshotUrl"):
                 try:
