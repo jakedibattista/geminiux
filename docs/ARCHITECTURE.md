@@ -525,10 +525,12 @@ The standalone `Listen to Recap` surface has now been removed. The presentation 
 - **Secrets rotation recommended** — before making the GitHub repo public, rotate `GEMINI_API_KEY`, `AGENT_API_SECRET`, and the Firebase service account key in the GCP console. The current secrets were used in local development only but should be considered compromised if the repo is pushed publicly without rotation.
 
 **Cloud Run deployment constraints:**
-- Memory: minimum 2 GiB for Playwright + Chromium; 4 GiB preferred for concurrent audits.
-- Timeout: set to 3600s (1 hour) — Cloud Run's default 300s will kill most audits mid-run.
-- Concurrency: keep low (1–10). Each audit spawns multiple browser processes.
-- Firebase Admin SDK uses Application Default Credentials on Cloud Run automatically — no service account JSON file needed in production, just the `GOOGLE_CLOUD_PROJECT` env var and the correct IAM roles on the Cloud Run service account.
+- **Execution Environment**: MUST use Gen 2 (`--execution-environment gen2`). Gen 1 uses the strict gVisor sandbox which blocks Chromium from binding netlink sockets and using `inotify`, causing immediate crashes on boot.
+- **Playwright Arguments**: Must launch with `--no-sandbox`, `--disable-setuid-sandbox`, and `--disable-dev-shm-usage` (to prevent `/dev/shm` shared memory exhaustion).
+- **Memory**: minimum 2 GiB for Playwright + Chromium; 4 GiB preferred for concurrent audits.
+- **Timeout**: set to 3600s (1 hour) — Cloud Run's default 300s will kill most audits mid-run.
+- **Concurrency**: keep low (1–10). Each audit spawns multiple browser processes.
+- **Firebase Admin SDK**: uses Application Default Credentials on Cloud Run automatically — no service account JSON file needed in production, just the `GOOGLE_CLOUD_PROJECT` env var and the correct IAM roles on the Cloud Run service account.
 
 ### Mar 16, 2026 — Screenshots Tab: Persona Quotes Missing For Rejected Screenshots
 **The Problem:** When the screenshot reviewer rejected a screenshot, persona quotes and thoughts would disappear entirely from that screenshot card in the UI. The screenshot itself still rendered but with an empty right panel — no quotes, no findings.
@@ -625,8 +627,13 @@ Two new evaluation categories were also added to the system instruction: **conte
 - `Pillow` added to `requirements.txt`
 
 ### Mar 16, 2026 — Composite Capture Now Scrolls To Footer
-**The Problem:** Even after moving to composite screenshots, long pages could still be truncated because the crawler used a fixed frame budget: 3 viewport captures for the homepage and 2 for subpages. Many real marketing sites are much taller than that, so screenshot evidence still missed lower sections and the footer.
+**The Problem:** Even after moving to composite screenshots, long pages could still be truncated because the crawler was using a fixed frame budget: 3 viewport captures for the homepage and 2 for subpages. Many real marketing sites are much taller than that, so screenshot evidence still missed lower sections and the footer.
 
 **The Fix:** `_capture_page_screenshots()` in `crawler.py` now measures `scrollY`, `innerHeight`, `scrollHeight`, and the footer position on each capture loop. It keeps scrolling and capturing until the visible viewport reaches the footer or the true page bottom, with a hard cap of 7 frames to avoid runaway capture time.
 
 **Resulting Rule:** Screenshot capture should be content-aware, not based on a tiny fixed frame count. One composite per page is still the storage model, but the composite should reach the footer whenever the page allows it.
+
+### Mar 16, 2026 — Ignoring Stitched-Screenshot Hallucinations
+**The Problem:** Because the crawler stitches multiple viewport frames into a single long image, sticky elements (like fixed navigation headers or floating chat widgets) end up duplicated across the composite image at every scroll stop. Persona agents were seeing these and logging UX issues like "The page has three repetitive headers" or "The chat widget is awkwardly tiled everywhere."
+
+**The Fix:** Updated the core persona prompt in `native_persona.py` with an explicit "IMPORTANT CONTEXT ABOUT THE SCREENSHOTS" block. It tells the model to ignore duplicate sticky headers, footers, or layout stitching errors, and recognize them as artifacts of the capture process rather than intentional design choices.

@@ -439,6 +439,15 @@ Live testing exposed a nastier screenshot bug: some `finding.screenshotUrl` valu
 **Crawler screenshots were still too shallow on long pages**  
 Even after switching to stitched composite screenshots, the crawler was only capturing a fixed number of viewport frames: 3 for the homepage and 2 for subpages. That meant long landing pages often stopped far above the footer, so the "full page" evidence still missed key content lower on the page. Fix: replace the fixed-frame capture with a footer-aware loop that keeps scrolling and capturing until the footer or page bottom is visible, capped at 7 frames. This preserves the one-composite-per-page model while giving much more complete coverage on real marketing sites.
 
+**Cloud Run's security sandbox crashed Chromium instantly**  
+When the backend first deployed to Google Cloud Run, it immediately failed with `"Could not bind NETLINK socket: Operation not supported"`. Cloud Run's default "Gen 1" environment uses gVisor, a highly restrictive user-space kernel that intercepts and blocks many system calls that Chromium relies on for its own sandboxing. Fix: pass `--no-sandbox` and `--disable-dev-shm-usage` to Playwright, and explicitly deploy the Cloud Run service using the `--execution-environment gen2` flag to get a full Linux VM environment.
+
+**Playwright timeout unhandled exceptions blowing up the backend**  
+Cloud Run networking and CPU allocation can be bursty, causing headless pages to load slightly slower than on a local MacBook. If the 15-second screenshot timeout triggered, the unhandled exception bubbled all the way up and forcefully crashed the entire asyncio worker, killing the audit dead in its tracks. Fix: wrapped screenshot captures in robust `try...except` blocks so transient timeouts simply log a warning and let the audit proceed gracefully.
+
+**The stitched-screenshot hallucination**  
+Because the crawler stitches multiple viewport frames into a single long image, sticky elements (like fixed navigation headers or floating chat widgets) ended up visually duplicated across the composite image at every scroll stop. The persona agents saw this and immediately logged scathing UX issues like "The page has three repetitive headers" or "The chat widget is awkwardly tiled everywhere." Fix: injected an explicit disclaimer into the core `native_persona.py` prompt telling the model to ignore duplicate sticky headers, footers, and layout stitching errors, recognizing them as artifacts of the capture process rather than intentional design choices.
+
 ---
 
 ## What's Next
