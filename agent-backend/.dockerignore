@@ -1,0 +1,26 @@
+# Never bake secrets into the image - inject via Cloud Run env vars or Secret Manager
+.env
+.env.*
+*.env
+
+# Service account key files
+*-firebase-adminsdk-*.json
+*service-account*.json
+*service_account*.json
+credentials.json
+
+# Dev artifacts
+__pycache__/
+*.pyc
+*.pyo
+.adk/
+venv/
+.venv/
+
+# Test files
+test*.py
+*.png
+*.jpg
+*.jpeg
+test-results/
+playwright-report/

@@ -1,0 +1,7 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/agent-backend/venv/bin/python",
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/agent-backend",
+    "${workspaceFolder}/agent-backend/venv/lib/python3.12/site-packages"
+  ]
+}

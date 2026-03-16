@@ -1,0 +1,9 @@
+google-adk>=1.26.0
+firebase-admin
+playwright==1.52.0
+termcolor==3.1.0
+rich
+fastapi
+uvicorn
+httpx
+beautifulsoup4
