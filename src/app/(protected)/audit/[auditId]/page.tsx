@@ -180,7 +180,7 @@ function getPersonaStatus(report?: PersonaReport): 'running' | 'completed' | 'er
 
 function getPersonaProgress(report?: PersonaReport): number {
   const status = getPersonaStatus(report);
-  if (status === 'waiting') return 0.05;
+  if (status === 'waiting' || !report) return 0.05;
   if (status === 'completed') return 1;
   if (status === 'error') return 0.98;
 
