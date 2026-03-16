@@ -8,9 +8,11 @@ AuditMySite is an open-source web app that runs multiple AI personas against any
 
 ## Try the Live App
 
+**🎥 [Watch the demo →](https://youtu.be/VstSF9ii0cU)**
+
 **No setup required.** The app is fully deployed and running.
 
-1. Go to **[geminiux-buddy-tech.vercel.app](https://geminiux-buddy-tech.vercel.app)**
+1. Go to **[geminiux.vercel.app](https://geminiux.vercel.app)** (also available at `geminiux-buddy-tech.vercel.app`)
 2. Create a free account (email + password)
 3. Paste any public URL — try your own site, or use `https://stripe.com` or `https://linear.app` as a demo
 4. Select one or more personas and click **Start Audit**
@@ -23,8 +25,8 @@ AuditMySite is an open-source web app that runs multiple AI personas against any
 ## How It Works
 
 1. **Crawl** — A dedicated Playwright crawler visits the site on both desktop (1280×800) and mobile (390×844), capturing composite scroll screenshots of the homepage and top navigation pages.
-2. **Vision Filter** — `gemini-2.5-flash` reviews every screenshot, rejecting loading placeholders, blank frames, and other headless render artifacts before personas see anything.
-3. **Persona Review** — Multiple persona agents (`gemini-3.1-pro-preview`) receive the approved screenshots in parallel. Each agent must log at least 2 distinct first-person findings per screenshot.
+2. **Vision Filter** — `gemini-2.5-flash` reviews every screenshot and scores whether it is clean enough for the founder presentation. This review no longer gates persona coverage.
+3. **Persona Review** — Multiple persona agents (`gemini-3.1-pro-preview`) review the full crawled screenshot set in parallel, using the screenshot review pass only as presentation-quality metadata. Each agent must log at least 2 distinct first-person findings per screenshot.
 4. **Consolidation** — `gemini-2.5-pro` synthesises all evidence-backed findings into a scored executive report.
 5. **Presentation** — A boardroom-style slide deck is generated with per-slide narration audio, grounded in real audit screenshots wherever possible.
 
@@ -46,7 +48,7 @@ Personas focus on:
 - **Dual Viewport Capture** — Every page is captured in both desktop and mobile viewports; personas receive the view matching their device type
 - **Composite Screenshots** — Scrolled viewport frames are stitched into a single image per page, so findings always attach to the right visual context
 - **Live Streaming** — Findings appear in the UI as agents run via Firestore `onSnapshot`
-- **Screenshot QA Pass** — A separate multimodal reviewer checks every screenshot for visual fitness before it's used as evidence
+- **Screenshot QA Pass** — A separate multimodal reviewer checks every screenshot for founder-deck quality without narrowing persona audit coverage
 - **Custom AI Persona Builder** — Describe any persona in natural language, pick Desktop or Mobile, and Gemini generates a structured persona saved to your account
 - **Executive Report** — Scored report with summary, critical issues, recommendations, and positive findings
 - **Founder Presentation** — Narrated slide deck with per-slide audio, grounded in real site screenshots
@@ -157,7 +159,8 @@ service firebase.storage {
 ## Deploying to Production
 
 Live deployment (reference):
-- **Frontend:** https://geminiux-buddy-tech.vercel.app
+- **Frontend:** https://geminiux.vercel.app
+- **Frontend alias:** https://geminiux-buddy-tech.vercel.app
 - **Backend:** https://audit-agent-403481904256.us-central1.run.app
 - **Repo:** https://github.com/jakedibattista/geminiux
 
@@ -244,6 +247,14 @@ Key settings:
 gcloud run services update audit-agent \
   --region us-central1 --project YOUR_PROJECT_ID \
   --update-env-vars "ALLOWED_ORIGINS=https://your-app.vercel.app"
+```
+
+If you use multiple production aliases, include all of them in `ALLOWED_ORIGINS`, for example:
+
+```bash
+gcloud run services update audit-agent \
+  --region us-central1 --project YOUR_PROJECT_ID \
+  --update-env-vars '^@^ALLOWED_ORIGINS=https://your-app.vercel.app,https://your-app-team.vercel.app'
 ```
 
 ---
