@@ -128,7 +128,7 @@ Users can provide `loginUrl`, `loginEmail`, and `loginPassword` in the new audit
 ## Screenshot System
 
 ### How It Works
-1. **Crawl**: `crawler.py` runs two parallel `BrowserDriver` instances (Desktop 1280×800 and Mobile 390×844). For each page, it now captures viewport frames in a footer-aware loop, scrolling until the footer or page bottom is visible, capped at 7 frames, and **stitches them into a single composite PNG** using Pillow. One composite URL is stored per page per device.
+1. **Crawl**: `crawler.py` runs two parallel `BrowserDriver` instances (Desktop 1280×800 and Mobile 390×844). For each page, it now captures viewport frames in a footer-aware loop, scrolling until the footer or page bottom is visible, capped at 7 frames, and **stitches them into a single composite PNG** using Pillow. One composite URL is stored per page per device, and the first viewport frame is also stored as a separate `*_presentation_screenshot` preview.
 2. **Vision QA**: `screenshot_reviewer.py` reviews every composite for visual quality (blank frames, loading skeletons, broken device shells) and stores founder-presentation suitability in `mediaArtifacts.screenshotReview`.
 3. **Distribute**: Persona agents receive the full crawled set matching their `deviceType`, even if some screenshots are too messy for the presentation layer.
 4. **Presentation filtering**: The review pass is advisory for evidence presentation and slide generation, not a hard gate on persona coverage.
@@ -159,8 +159,15 @@ The dedicated screenshot reviewer is intentionally stricter than the browsing ag
 
 If a screenshot looks like a headless rendering artifact, missing gallery image, empty device shell, broken embed, or generally poor slide material, it is rejected for presentation use and downstream consumers must fall back to another approved screenshot or generated filler art. Persona agents can still inspect it as part of the live audit so coverage is not artificially narrowed to the few prettiest pages.
 
+### Presentation-specific screenshot behavior
+The product now intentionally uses two screenshot formats for different surfaces:
+- **Screenshots tab / persona review**: uses the stitched composite so the model can cite one stable URL for the full page.
+- **Presentation slides**: prefer the single top-of-page viewport capture stored in `desktop_presentation_screenshot` or `mobile_presentation_screenshot`, because it fits a slide card much better than a very tall stitched image.
+
+This split keeps evidence mapping stable for the audit pipeline while making the founder presentation look more polished and readable.
+
 ### Important Limitation
-Screenshot capture is still coarse at the storage layer: `BrowserDriver.create_screenshot_upload()` dedupes by normalized page URL. That means the reviewer can reject bad screenshots, but it cannot recover a better section-specific screenshot if the system only stored one image for that page. The next reliability step would be section-aware screenshot storage rather than page-only reuse.
+Presentation screenshots are currently always the first captured viewport frame for a page. That is usually a good hero/top-of-page visual, but it is not yet a smart crop chosen per finding or per slide. The next reliability step would be section-aware screenshot storage or per-slide crop selection rather than page-only reuse.
 
 ### Coordinate Overlays — Removed
 We previously rendered CSS red circles on screenshots based on `(x, y)` coordinates logged by the agent. These were removed on Mar 9, 2026 because:
@@ -351,6 +358,7 @@ AGENT_API_SECRET=...        # Must match frontend
 - A dedicated screenshot-review pass now runs between persona completion and consolidation, removing screenshots with blank/missing frames or poor presentation quality before they reach the final deck
 - Completed audits now generate a founder-friendly presentation artifact with per-slide audio and more visual storytelling than the raw report
 - The presentation layer prefers unique screenshots per slide; when the pool of unique URLs is exhausted, it cycles through evidence screenshots rather than generating placeholder visuals
+- Presentation slides now prefer a single normal-sized viewport screenshot per page instead of reusing the full stitched composite; the Screenshots tab still shows the stitched evidence view
 - Audit progress now stays visible through the presentation handoff instead of briefly showing a false "fully complete" state between report completion and presentation initialization
 - **Standardized Branded Titles:** Presentation and report headers now follow the format: "UX Audit of <company or product name>". A `getFriendlySiteName` helper is used in both Python and TypeScript to reliably extract brand names from any URL.
 
@@ -597,6 +605,19 @@ Two new evaluation categories were also added to the system instruction: **conte
 **Root Cause:** `main.py` builds `persona_reports` as `{personaId, summary, findings[]}` — no `pageScreenshots` or `latestScreenshot` fields. `_attach_supporting_screenshots` in `audit_recap.py` built its fallback pool (`all_raw_screenshots`) from those missing fields, so the pool was always empty. Separately, `_pick_supporting_findings` deduplicates screenshot URLs, so if 3–4 findings per page all cite the same composite image, only 1 unique URL enters `supporting`. With ~2 unique URLs across an entire audit, the first two slides claimed both and all remaining slides found nothing — falling through to `_generate_presentation_visual_asset`, which generates an AI placeholder.
 
 **The Fix:** After the `pageScreenshots`/`latestScreenshot` pass, if `all_raw_screenshots` is still empty, populate it from `screenshotUrl` fields on the findings themselves. This gives the cyclic reuse path at the bottom of the fallback chain a real pool to draw from. Every slide now gets an actual audit screenshot instead of synthetic art.
+
+### Mar 16, 2026 — Presentation Slides Needed A Normal-Sized Screenshot
+**The Problem:** Once real screenshots were attached to every presentation slide, many cards looked awkward because the slide UI was rendering the same very tall stitched composite used for persona evidence. On a 16:9-style presentation card, those composites shrank down into thin unreadable strips.
+
+**Root Cause:** The crawler only stored one screenshot artifact per page/device for the post-audit pipeline: the stitched composite. `audit_recap.py` reused that same URL for both evidence grounding and presentation visuals, so the deck had no way to choose a cleaner single-frame image.
+
+**The Fix:** `crawler.py` now uploads two artifacts per page/device:
+- the stitched `composite_*` PNG for persona evidence and screenshot grouping
+- a first-frame `viewport_*` PNG stored as `desktop_presentation_screenshot` / `mobile_presentation_screenshot`
+
+`audit_recap.py` now builds a page/source map from `crawledPages` and rewrites slide screenshot selection to prefer those presentation-specific viewport images whenever available.
+
+**Resulting Rule:** Keep the stitched composite as the canonical evidence image, but prefer a single normal-sized viewport screenshot for slide presentation.
 
 ### Mar 16, 2026 — Duplicate Screenshot Cards in Screenshots Tab
 **The Problem:** The last page the crawler visited appeared twice as a desktop card and twice as a mobile card in the Screenshots tab.

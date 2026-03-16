@@ -111,6 +111,82 @@ def _friendly_site_name(audit_url: str) -> str:
     return label or hostname
 
 
+def _normalize_page_key(page_url: str | None) -> str:
+    cleaned = _clean_line(page_url)
+    if not cleaned:
+        return ""
+    try:
+        parsed = urlparse(cleaned)
+        path = re.sub(r"/+$", "", parsed.path or "") or "/"
+        return f"{parsed.scheme}://{parsed.netloc}{path}"
+    except Exception:
+        return cleaned
+
+
+def _build_presentation_screenshot_maps(crawled_pages: list[dict] | None) -> tuple[dict[str, str], dict[str, str]]:
+    by_page: dict[str, str] = {}
+    by_source: dict[str, str] = {}
+
+    for page in crawled_pages or []:
+        page_url = _clean_line(page.get("url"))
+        if not page_url:
+            continue
+
+        page_key = _normalize_page_key(page_url)
+        desktop_screenshots = [
+            _clean_line(url) for url in page.get("desktop_screenshots", []) or []
+            if _is_image_like_url(url)
+        ]
+        mobile_screenshots = [
+            _clean_line(url) for url in page.get("mobile_screenshots", []) or []
+            if _is_image_like_url(url)
+        ]
+        desktop_preview = _clean_line(page.get("desktop_presentation_screenshot"))
+        mobile_preview = _clean_line(page.get("mobile_presentation_screenshot"))
+
+        if not _is_image_like_url(desktop_preview):
+            desktop_preview = desktop_screenshots[0] if desktop_screenshots else ""
+        if not _is_image_like_url(mobile_preview):
+            mobile_preview = mobile_screenshots[0] if mobile_screenshots else ""
+
+        default_preview = desktop_preview or mobile_preview
+        if default_preview:
+            by_page[page_key] = default_preview
+
+        for url in desktop_screenshots:
+            by_source[url] = desktop_preview or default_preview or url
+        for url in mobile_screenshots:
+            by_source[url] = mobile_preview or default_preview or url
+
+        if desktop_preview:
+            by_source[desktop_preview] = desktop_preview
+        if mobile_preview:
+            by_source[mobile_preview] = mobile_preview
+
+    return by_page, by_source
+
+
+def _preferred_presentation_screenshot(
+    page_url: str | None,
+    source_url: str | None,
+    presentation_screenshot_by_page: dict[str, str] | None,
+    presentation_screenshot_by_source: dict[str, str] | None,
+) -> str:
+    cleaned_source = _clean_line(source_url)
+    if cleaned_source and presentation_screenshot_by_source:
+        preferred_by_source = presentation_screenshot_by_source.get(cleaned_source)
+        if _is_image_like_url(preferred_by_source):
+            return preferred_by_source
+
+    page_key = _normalize_page_key(page_url)
+    if page_key and presentation_screenshot_by_page:
+        preferred_by_page = presentation_screenshot_by_page.get(page_key)
+        if _is_image_like_url(preferred_by_page):
+            return preferred_by_page
+
+    return cleaned_source
+
+
 def _finding_has_approved_screenshot(finding: dict) -> bool:
     screenshot_url = _clean_line((finding or {}).get("screenshotUrl"))
     if not screenshot_url or not _is_image_like_url(screenshot_url):
@@ -122,7 +198,12 @@ def _finding_has_approved_screenshot(finding: dict) -> bool:
     return True
 
 
-def _pick_supporting_findings(persona_reports: dict, limit: int = MAX_SUPPORTING_FINDINGS) -> list[dict]:
+def _pick_supporting_findings(
+    persona_reports: dict,
+    limit: int = MAX_SUPPORTING_FINDINGS,
+    presentation_screenshot_by_page: dict[str, str] | None = None,
+    presentation_screenshot_by_source: dict[str, str] | None = None,
+) -> list[dict]:
     supporting: list[dict] = []
     seen_urls: set[str] = set()
     seen_texts: set[str] = set()
@@ -134,6 +215,15 @@ def _pick_supporting_findings(persona_reports: dict, limit: int = MAX_SUPPORTING
             screenshot_url = (finding.get("screenshotUrl") or "").strip()
             text = _clean_line(finding.get("text"))
             if not text or not _finding_has_approved_screenshot(finding):
+                continue
+
+            screenshot_url = _preferred_presentation_screenshot(
+                finding.get("pageUrl"),
+                screenshot_url,
+                presentation_screenshot_by_page,
+                presentation_screenshot_by_source,
+            )
+            if not _is_image_like_url(screenshot_url):
                 continue
 
             signature = text.lower()
@@ -360,21 +450,46 @@ def _score_supporting_finding_for_slide(slide: dict, finding: dict) -> int:
     return score
 
 
-def _attach_supporting_screenshots(slides: list[dict], persona_reports: dict) -> list[dict]:
-    supporting = _pick_supporting_findings(persona_reports, limit=12)
+def _attach_supporting_screenshots(
+    slides: list[dict],
+    persona_reports: dict,
+    presentation_screenshot_by_page: dict[str, str] | None = None,
+    presentation_screenshot_by_source: dict[str, str] | None = None,
+) -> list[dict]:
+    supporting = _pick_supporting_findings(
+        persona_reports,
+        limit=12,
+        presentation_screenshot_by_page=presentation_screenshot_by_page,
+        presentation_screenshot_by_source=presentation_screenshot_by_source,
+    )
     
     # Also collect ALL raw screenshots as a final fallback
     all_raw_screenshots: list[str] = []
     seen_raw: set[str] = set()
+    for url in (presentation_screenshot_by_page or {}).values():
+        u = _clean_line(url)
+        if _is_image_like_url(u) and u not in seen_raw:
+            all_raw_screenshots.append(u)
+            seen_raw.add(u)
     for report in persona_reports.values():
         # Get screenshots from the page map
         for url in (report.get("pageScreenshots", {}) or {}).values():
-            u = _clean_line(url)
+            u = _preferred_presentation_screenshot(
+                None,
+                url,
+                presentation_screenshot_by_page,
+                presentation_screenshot_by_source,
+            )
             if _is_image_like_url(u) and u not in seen_raw:
                 all_raw_screenshots.append(u)
                 seen_raw.add(u)
         # Get latest screenshot
-        u_latest = _clean_line(report.get("latestScreenshot"))
+        u_latest = _preferred_presentation_screenshot(
+            report.get("latestScreenshotPage"),
+            report.get("latestScreenshot"),
+            presentation_screenshot_by_page,
+            presentation_screenshot_by_source,
+        )
         if _is_image_like_url(u_latest) and u_latest not in seen_raw:
             all_raw_screenshots.append(u_latest)
             seen_raw.add(u_latest)
@@ -387,7 +502,12 @@ def _attach_supporting_screenshots(slides: list[dict], persona_reports: dict) ->
             for finding in report.get("findings", []) or []:
                 if not isinstance(finding, dict):
                     continue
-                u = _clean_line(finding.get("screenshotUrl"))
+                u = _preferred_presentation_screenshot(
+                    finding.get("pageUrl"),
+                    finding.get("screenshotUrl"),
+                    presentation_screenshot_by_page,
+                    presentation_screenshot_by_source,
+                )
                 if _is_image_like_url(u) and u not in seen_raw:
                     all_raw_screenshots.append(u)
                     seen_raw.add(u)
@@ -496,13 +616,23 @@ def _attach_supporting_screenshots(slides: list[dict], persona_reports: dict) ->
     return enriched
 
 
-def build_founder_presentation(audit_url: str, report_data: dict, persona_reports: dict) -> dict:
+def build_founder_presentation(
+    audit_url: str,
+    report_data: dict,
+    persona_reports: dict,
+    presentation_screenshot_by_page: dict[str, str] | None = None,
+    presentation_screenshot_by_source: dict[str, str] | None = None,
+) -> dict:
     summary = _clean_line(report_data.get("summary"))
     score = report_data.get("score", "N/A")
     critical_issues = _top_lines(report_data.get("criticalIssues", []), 3)
     recommendations = _top_lines(report_data.get("recommendations", []), 3)
     positives = _top_lines(report_data.get("positives", []), 2)
-    supporting = _pick_supporting_findings(persona_reports)
+    supporting = _pick_supporting_findings(
+        persona_reports,
+        presentation_screenshot_by_page=presentation_screenshot_by_page,
+        presentation_screenshot_by_source=presentation_screenshot_by_source,
+    )
     summary_bullets = _build_summary_bullets(summary, score)
     issue_bullets = _build_issue_bullets(critical_issues)
     recommendation_bullets = _build_recommendation_bullets(recommendations)
@@ -638,8 +768,19 @@ def _presentation_authoring_schema() -> dict:
     }
 
 
-def _build_presentation_authoring_prompt(audit_url: str, report_data: dict, persona_reports: dict) -> str:
-    supporting = _pick_supporting_findings(persona_reports, limit=6)
+def _build_presentation_authoring_prompt(
+    audit_url: str,
+    report_data: dict,
+    persona_reports: dict,
+    presentation_screenshot_by_page: dict[str, str] | None = None,
+    presentation_screenshot_by_source: dict[str, str] | None = None,
+) -> str:
+    supporting = _pick_supporting_findings(
+        persona_reports,
+        limit=6,
+        presentation_screenshot_by_page=presentation_screenshot_by_page,
+        presentation_screenshot_by_source=presentation_screenshot_by_source,
+    )
     prompt_payload = {
         "auditUrl": audit_url,
         "score": report_data.get("score"),
@@ -652,8 +793,21 @@ def _build_presentation_authoring_prompt(audit_url: str, report_data: dict, pers
     return json.dumps(prompt_payload, indent=2)
 
 
-def _sanitize_presentation_deck(deck: dict, report_data: dict, audit_url: str, persona_reports: dict) -> dict:
-    fallback = build_founder_presentation(audit_url, report_data, persona_reports)
+def _sanitize_presentation_deck(
+    deck: dict,
+    report_data: dict,
+    audit_url: str,
+    persona_reports: dict,
+    presentation_screenshot_by_page: dict[str, str] | None = None,
+    presentation_screenshot_by_source: dict[str, str] | None = None,
+) -> dict:
+    fallback = build_founder_presentation(
+        audit_url,
+        report_data,
+        persona_reports,
+        presentation_screenshot_by_page=presentation_screenshot_by_page,
+        presentation_screenshot_by_source=presentation_screenshot_by_source,
+    )
     cleaned_slides: list[dict] = []
 
     for raw_slide in deck.get("slides", []) or []:
@@ -696,7 +850,12 @@ def _sanitize_presentation_deck(deck: dict, report_data: dict, audit_url: str, p
             "visualPrompt": _clean_line(raw_slide.get("visualPrompt")) or None,
         })
 
-    cleaned_slides = _attach_supporting_screenshots(cleaned_slides[:6], persona_reports)
+    cleaned_slides = _attach_supporting_screenshots(
+        cleaned_slides[:6],
+        persona_reports,
+        presentation_screenshot_by_page=presentation_screenshot_by_page,
+        presentation_screenshot_by_source=presentation_screenshot_by_source,
+    )
 
     if not cleaned_slides:
         return fallback
@@ -715,8 +874,20 @@ def _sanitize_presentation_deck(deck: dict, report_data: dict, audit_url: str, p
     }
 
 
-def _author_founder_presentation(audit_url: str, report_data: dict, persona_reports: dict) -> dict:
-    prompt = _build_presentation_authoring_prompt(audit_url, report_data, persona_reports)
+def _author_founder_presentation(
+    audit_url: str,
+    report_data: dict,
+    persona_reports: dict,
+    presentation_screenshot_by_page: dict[str, str] | None = None,
+    presentation_screenshot_by_source: dict[str, str] | None = None,
+) -> dict:
+    prompt = _build_presentation_authoring_prompt(
+        audit_url,
+        report_data,
+        persona_reports,
+        presentation_screenshot_by_page=presentation_screenshot_by_page,
+        presentation_screenshot_by_source=presentation_screenshot_by_source,
+    )
     instruction = f"""
 You are a senior UX researcher preparing a polished board-of-directors presentation.
 
@@ -790,7 +961,14 @@ General Rules:
                 config=config,
             )
             deck = response.parsed or json.loads(response.text)
-            sanitized = _sanitize_presentation_deck(deck, report_data, audit_url, persona_reports)
+            sanitized = _sanitize_presentation_deck(
+                deck,
+                report_data,
+                audit_url,
+                persona_reports,
+                presentation_screenshot_by_page=presentation_screenshot_by_page,
+                presentation_screenshot_by_source=presentation_screenshot_by_source,
+            )
             sanitized["model"] = model_name
             return sanitized
         except Exception as exc:
@@ -1051,11 +1229,28 @@ async def generate_audio_presentation(audit_id: str, audit_url: str, report_data
     }
     _set_presentation_state(audit_id, **pending_state)
 
+    audit_snapshot = _artifact_doc_ref(audit_id).get()
+    audit_data = audit_snapshot.to_dict() if audit_snapshot.exists else {}
+    crawled_pages = audit_data.get("crawledPages", []) or []
+    presentation_screenshot_by_page, presentation_screenshot_by_source = _build_presentation_screenshot_maps(crawled_pages)
+
     try:
-        presentation = _author_founder_presentation(audit_url, report_data, persona_reports)
+        presentation = _author_founder_presentation(
+            audit_url,
+            report_data,
+            persona_reports,
+            presentation_screenshot_by_page=presentation_screenshot_by_page,
+            presentation_screenshot_by_source=presentation_screenshot_by_source,
+        )
     except Exception as author_error:
         print(f"[AuditRecap] Presentation authoring fallback for {audit_id}: {author_error}")
-        presentation = build_founder_presentation(audit_url, report_data, persona_reports)
+        presentation = build_founder_presentation(
+            audit_url,
+            report_data,
+            persona_reports,
+            presentation_screenshot_by_page=presentation_screenshot_by_page,
+            presentation_screenshot_by_source=presentation_screenshot_by_source,
+        )
 
     base_state = {
         "status": "generating",

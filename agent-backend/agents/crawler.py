@@ -40,22 +40,22 @@ def _stitch_png_frames(frames: list[bytes]) -> bytes:
     return buf.getvalue()
 
 
-async def _upload_composite(audit_id: str, png_bytes: bytes) -> str | None:
-    """Upload a composite PNG to Firebase Storage and return its download URL."""
+async def _upload_png(audit_id: str, png_bytes: bytes, prefix: str) -> str | None:
+    """Upload a PNG to Firebase Storage and return its download URL."""
     if not firebase_admin._apps or not png_bytes:
         return None
     try:
         bucket = storage.bucket()
         ts_ms = int(time.time() * 1000)
         token = str(uuid.uuid4())
-        blob_name = f"screenshots/{audit_id}/crawler/composite_{ts_ms}.png"
+        blob_name = f"screenshots/{audit_id}/crawler/{prefix}_{ts_ms}.png"
         blob = bucket.blob(blob_name)
         blob.metadata = {"firebaseStorageDownloadTokens": token}
         await asyncio.to_thread(blob.upload_from_string, png_bytes, content_type="image/png", timeout=30)
         encoded = urllib.parse.quote(blob_name, safe="")
         return f"https://firebasestorage.googleapis.com/v0/b/{bucket.name}/o/{encoded}?alt=media&token={token}"
     except Exception as e:
-        print(f"[Crawler {audit_id}] Composite upload error: {e}")
+        print(f"[Crawler {audit_id}] PNG upload error ({prefix}): {e}")
         return None
 
 
@@ -65,7 +65,7 @@ async def _capture_page_screenshots(
     url: str,
     label: str,
     max_frames: int,
-) -> list[str]:
+) -> tuple[list[str], str | None]:
     """
     Capture enough viewport frames to reach the footer or page bottom, up to
     `max_frames`, then stitch them into a single composite image.
@@ -147,11 +147,13 @@ async def _capture_page_screenshots(
         pass
 
     if not frames:
-        return []
+        return [], None
 
     composite_bytes = _stitch_png_frames(frames)
-    upload_url = await _upload_composite(audit_id, composite_bytes)
-    return [upload_url] if upload_url else []
+    composite_task = _upload_png(audit_id, composite_bytes, "composite")
+    preview_task = _upload_png(audit_id, frames[0], "viewport")
+    composite_url, preview_url = await asyncio.gather(composite_task, preview_task)
+    return ([composite_url] if composite_url else []), preview_url
 
 
 async def run_crawler_agent(audit_id: str, target_url: str, auth: dict = None):
@@ -185,7 +187,7 @@ async def run_crawler_agent(audit_id: str, target_url: str, auth: dict = None):
         desktop_homepage_shots_task = _capture_page_screenshots(desktop_driver, audit_id, homepage_url, "Homepage", 7)
         mobile_homepage_shots_task = _capture_page_screenshots(mobile_driver, audit_id, homepage_url, "Homepage", 7)
 
-        desktop_homepage_shots, mobile_homepage_shots = await asyncio.gather(
+        (desktop_homepage_shots, desktop_homepage_preview), (mobile_homepage_shots, mobile_homepage_preview) = await asyncio.gather(
             desktop_homepage_shots_task, mobile_homepage_shots_task
         )
 
@@ -194,6 +196,8 @@ async def run_crawler_agent(audit_id: str, target_url: str, auth: dict = None):
             "label": "Homepage",
             "desktop_screenshots": desktop_homepage_shots,
             "mobile_screenshots": mobile_homepage_shots,
+            "desktop_presentation_screenshot": desktop_homepage_preview,
+            "mobile_presentation_screenshot": mobile_homepage_preview,
             "screenshots": desktop_homepage_shots  # Backwards compatibility
         })
 
@@ -219,7 +223,7 @@ async def run_crawler_agent(audit_id: str, target_url: str, auth: dict = None):
             desktop_sub_task = _capture_page_screenshots(desktop_driver, audit_id, url, "Subpage", 7)
             mobile_sub_task = _capture_page_screenshots(mobile_driver, audit_id, url, "Subpage", 7)
 
-            desktop_sub_shots, mobile_sub_shots = await asyncio.gather(desktop_sub_task, mobile_sub_task)
+            (desktop_sub_shots, desktop_sub_preview), (mobile_sub_shots, mobile_sub_preview) = await asyncio.gather(desktop_sub_task, mobile_sub_task)
 
             path = urllib.parse.urlparse(url).path.strip('/')
             label = path.split('/')[-1].replace('-', ' ').replace('_', ' ').title() if path else 'Page'
@@ -229,6 +233,8 @@ async def run_crawler_agent(audit_id: str, target_url: str, auth: dict = None):
                 "label": label,
                 "desktop_screenshots": desktop_sub_shots,
                 "mobile_screenshots": mobile_sub_shots,
+                "desktop_presentation_screenshot": desktop_sub_preview,
+                "mobile_presentation_screenshot": mobile_sub_preview,
                 "screenshots": desktop_sub_shots  # Backwards compatibility
             })
 
