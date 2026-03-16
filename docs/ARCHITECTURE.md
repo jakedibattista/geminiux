@@ -348,7 +348,7 @@ AGENT_API_SECRET=...        # Must match frontend
 - Consolidation is now grounded in evidence-backed `findings`; persona `summary` is treated as secondary context only
 - A dedicated screenshot-review pass now runs between persona completion and consolidation, removing screenshots with blank/missing frames or poor presentation quality before they reach the final deck
 - Completed audits now generate a founder-friendly presentation artifact with per-slide audio and more visual storytelling than the raw report
-- The presentation layer now avoids reusing the same approved screenshot twice; if no unused approved evidence fits, it falls back to generated visuals instead of duplicating a slide image
+- The presentation layer prefers unique screenshots per slide; when the pool of unique URLs is exhausted, it cycles through evidence screenshots rather than generating placeholder visuals
 - Audit progress now stays visible through the presentation handoff instead of briefly showing a false "fully complete" state between report completion and presentation initialization
 - **Standardized Branded Titles:** Presentation and report headers now follow the format: "UX Audit of <company or product name>". A `getFriendlySiteName` helper is used in both Python and TypeScript to reliably extract brand names from any URL.
 
@@ -585,6 +585,20 @@ Two new evaluation categories were also added to the system instruction: **conte
 - Required APIs are not enabled by default: enable `secretmanager`, `cloudbuild`, `run`, `containerregistry` before first deploy.
 - The Cloud Run default compute service account (`PROJECT_NUMBER-compute@developer.gserviceaccount.com`) needs `secretmanager.secretAccessor` granted per-secret, plus `datastore.user`, `storage.objectAdmin`, and `aiplatform.user` at the project level for Firebase and Vertex AI access.
 - CORS is managed via the `ALLOWED_ORIGINS` env var. Deploy with `ALLOWED_ORIGINS=*` first, then update to the Vercel URL after the frontend is deployed.
+
+### Mar 16, 2026 — Presentation Slides Showing Generic AI Placeholders
+**The Problem:** Most presentation slides displayed generic AI-generated images instead of real audit screenshots.
+
+**Root Cause:** `main.py` builds `persona_reports` as `{personaId, summary, findings[]}` — no `pageScreenshots` or `latestScreenshot` fields. `_attach_supporting_screenshots` in `audit_recap.py` built its fallback pool (`all_raw_screenshots`) from those missing fields, so the pool was always empty. Separately, `_pick_supporting_findings` deduplicates screenshot URLs, so if 3–4 findings per page all cite the same composite image, only 1 unique URL enters `supporting`. With ~2 unique URLs across an entire audit, the first two slides claimed both and all remaining slides found nothing — falling through to `_generate_presentation_visual_asset`, which generates an AI placeholder.
+
+**The Fix:** After the `pageScreenshots`/`latestScreenshot` pass, if `all_raw_screenshots` is still empty, populate it from `screenshotUrl` fields on the findings themselves. This gives the cyclic reuse path at the bottom of the fallback chain a real pool to draw from. Every slide now gets an actual audit screenshot instead of synthetic art.
+
+### Mar 16, 2026 — Duplicate Screenshot Cards in Screenshots Tab
+**The Problem:** The last page the crawler visited appeared twice as a desktop card and twice as a mobile card in the Screenshots tab.
+
+**Root Cause:** `BrowserDriver.create_screenshot_upload()` is called on every navigation and initial page load. It writes individual `shot_TIMESTAMP.png` files to `agentReports/crawler_desktop.latestScreenshot` and `agentReports/crawler_mobile.latestScreenshot`. These are different URLs from the stitched `composite_TIMESTAMP.png` files in `crawledPages`. The `screenshotGroups` useMemo in `audit/[auditId]/page.tsx` iterated over all `personaReports` — including `crawler_desktop` and `crawler_mobile` — and hit the `latestScreenshot` injection block for each. Since those `shot_` URLs were not in `pageMap` (which only has composites from `crawledPages`), a new card was created for each, duplicating whichever page the crawler last visited.
+
+**The Fix:** Filter `crawler_*` reports out of the `screenshotGroups` persona-report loop. The crawler's composites still render correctly via `crawledPages`. The `shot_` files continue to serve the Live Agent Feeds tab for real-time progress display — they just no longer pollute the Screenshots tab.
 
 ### Mar 16, 2026 — Composite Screenshots Eliminate Finding-to-Image Mismatch
 **The Problem:** The crawler stored 3 separate scrolled screenshots for the homepage and 2 for each subpage. All shared the same `page_url`. When the persona agent called `log_issue`, it needed to cite the exact Firebase Storage token URL for whichever scroll frame its observation came from. The model almost never recalled the correct token, causing all findings for a page to pile up on the first screenshot URL and leaving the others blank in the UI.
