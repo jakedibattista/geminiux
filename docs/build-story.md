@@ -346,7 +346,7 @@ Here's the honest summary of how the architecture evolved:
 Started with Google's ADK framework. Hit walls with model restrictions, rate limits, and broken state passing. Threw it out and wrote my own execution loop with native Python `asyncio` and raw Playwright. Less magic, more control.
 
 **Pivot 2 — Browsing Agents to Crawl-and-Review (the big one):**  
-Even with native Playwright, asking an AI to *simultaneously* navigate a browser, reason about UX, and log findings was too much. It was like asking someone to drive, read a map, and write a book report at the same time. I split the jobs: a dedicated crawler does all the driving and screenshot-taking first. Then separate reviewer agents look at the photos and write the report. Much better.
+Even with native Playwright, asking an AI to *simultaneously* navigate a browser, reason about UX, and log findings was too much. It was like asking someone to drive, read a map, and write a book report at the same time. My friend Bhavya was the one who crystallized the fix: pull the crawler out into its own dedicated agent that does nothing but drive the browser and take screenshots, then hand the photos off to separate reviewer agents who only read and write. I split the jobs exactly that way — a dedicated crawler does all the driving and screenshot-taking first, then the persona reviewers look at the photos and write the report. Much better.
 
 **Pivot 3 — Static Report to Interactive Presentation:**  
 The original output was a text report. It was useful, but it didn't feel like something you'd want to share. I added a presentation layer: a full slide deck with per-slide audio narration, grounded in real screenshots from the audit. Every slide shows the actual product, not AI-generated placeholder art.
