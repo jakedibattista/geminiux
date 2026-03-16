@@ -574,6 +574,13 @@ The standalone `Listen to Recap` surface has now been removed. The presentation 
 
 Two new evaluation categories were also added to the system instruction: **content completeness** and **messaging consistency**.
 
+### Mar 16, 2026 — Presentation Slide Generation Crashed on TTS Quota
+**The Problem:** The TTS preview model (`gemini-2.5-flash-tts`) allows only 100 requests per day on the free tier. With 4-6 slides per audit, the quota was easily exhausted. The `429 RESOURCE_EXHAUSTED` error thrown by the TTS API bubbled up and crashed the entire presentation-building step in `main.py`, leaving the audit stalled without any slide deck.
+
+**The Fix:** Updated `_generate_tts_audio_asset` inside `audit_recap.py` to only log the error if the TTS quota is hit, and allow the presentation builder to proceed without audio. The slides will still generate correctly, just without the voiceover URL attached.
+
+**Resulting Rule:** Non-critical presentation enrichments (like audio) should fail gracefully and not crash the core slide generation.
+
 ### Mar 16, 2026 — Public GitHub + GCP Cloud Run Deployment
 
 **Live URLs:**

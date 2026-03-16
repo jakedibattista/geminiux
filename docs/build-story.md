@@ -454,6 +454,9 @@ Because the crawler stitches multiple viewport frames into a single long image, 
 **Cloud Run CPU throttling froze background tasks**  
 The backend API returned a `200 OK` as soon as the audit started, delegating the actual work to a FastAPI `BackgroundTasks` queue. But Cloud Run defaults to "allocate CPU only during request processing." The moment the `200 OK` was returned, Cloud Run throttled the container's CPU to near zero, causing the background crawler to freeze instantly. If no other requests came in, the container was eventually killed, leaving audits stuck forever. Fix: explicitly deployed the service with `--no-cpu-throttling` (CPU always allocated) and increased the container timeout to 3600s so long-running audits aren't interrupted by idle scaling policies.
 
+**Silent presentation failure due to TTS rate limits**  
+Google's text-to-speech preview model (`gemini-2.5-flash-tts`) imposes a strict limit of 100 requests per day per project on the free tier. Because the presentation builder generates unique audio for every slide (typically 4–6 slides per audit), a few concurrent test runs quickly exhausted the daily quota. When the `429 RESOURCE_EXHAUSTED` error was thrown, it crashed the entire presentation-generation step, leaving the audit permanently stalled without a slide deck. Fix: Wrapped the audio generation call in `audit_recap.py` with a specific `try/except` block. When the TTS quota is exhausted, the backend now catches the error, logs a warning, and continues building the visual slide deck. The presentation still renders perfectly in the frontend, just without voiceover audio, allowing audits to succeed even under rate limits.
+
 ---
 
 ## What's Next
