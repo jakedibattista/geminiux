@@ -433,6 +433,12 @@ The `persona_reports` dict built in `main.py` only included `{personaId, summary
 **Duplicate screenshot cards in the Screenshots tab**  
 The `BrowserDriver` (used internally by the crawler) calls `create_screenshot_upload()` on every page navigation, writing individual `shot_TIMESTAMP.png` files to `agentReports/crawler_desktop.latestScreenshot` and `agentReports/crawler_mobile.latestScreenshot`. These `shot_` URLs are different from the stitched `composite_TIMESTAMP.png` URLs stored in `crawledPages`. The frontend `screenshotGroups` useMemo processed all persona reports — including `crawler_desktop` and `crawler_mobile` — and created a new card for each unrecognized `latestScreenshot` URL. This caused the last page visited by the crawler to appear twice in the Screenshots tab (one individual `shot_` card, one composite card). Fix: filter `crawler_*` reports out of the `screenshotGroups` loop. The crawler's composites still render correctly via `crawledPages`.
 
+**Broken image links across the audit UI**  
+Live testing exposed a nastier screenshot bug: some `finding.screenshotUrl` values in Firestore were not image URLs at all. They were plain page URLs like `https://buddysports.app/about`. That polluted both the Screenshots tab and the founder presentation, because the frontend trusted any non-empty `screenshotUrl` and tried to render it as an `<img>`. The result was broken image boxes, visible alt text like "Agent view of ...", and slides that linked to web pages instead of real evidence screenshots. Root cause: `native_persona.py` trusted the model-provided `screenshot_url` argument without checking whether it matched one of the actual crawled screenshot URLs. Fix: validate model-provided screenshot URLs against the crawled screenshot set, reject non-image URLs in the presentation attachment pipeline, and add frontend guards so stale polluted audits no longer attempt to render page URLs as images.
+
+**Crawler screenshots were still too shallow on long pages**  
+Even after switching to stitched composite screenshots, the crawler was only capturing a fixed number of viewport frames: 3 for the homepage and 2 for subpages. That meant long landing pages often stopped far above the footer, so the "full page" evidence still missed key content lower on the page. Fix: replace the fixed-frame capture with a footer-aware loop that keeps scrolling and capturing until the footer or page bottom is visible, capped at 7 frames. This preserves the one-composite-per-page model while giving much more complete coverage on real marketing sites.
+
 ---
 
 ## What's Next
@@ -443,6 +449,7 @@ The architecture has more room to grow:
 
 - **Authenticated audits** work for standard username/password sites. MFA and OTP are still out of scope.
 - **The crawler is capped at ~4 pages** right now. More thorough site crawls are possible but require smarter navigation logic.
+- **Per-page screenshot depth is better now** because the crawler scrolls until the footer or page bottom, but screenshot capture is still page-level, not section-aware.
 - **The presentation layer** is where the most polish lives — and where the most polish can still be added.
 
 The three pivots taught me more about building production AI systems than any amount of reading would have. You learn where the framework boundaries are by hitting them. You learn what a model can't do by watching it fail confidently.

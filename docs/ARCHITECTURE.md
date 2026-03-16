@@ -128,7 +128,7 @@ Users can provide `loginUrl`, `loginEmail`, and `loginPassword` in the new audit
 ## Screenshot System
 
 ### How It Works
-1. **Crawl**: `crawler.py` runs two parallel `BrowserDriver` instances (Desktop 1280×800 and Mobile 390×844). For each page, it captures N viewport frames while scrolling (3 for the homepage, 2 for subpages) and **stitches them into a single composite PNG** using Pillow. One composite URL is stored per page per device.
+1. **Crawl**: `crawler.py` runs two parallel `BrowserDriver` instances (Desktop 1280×800 and Mobile 390×844). For each page, it now captures viewport frames in a footer-aware loop, scrolling until the footer or page bottom is visible, capped at 7 frames, and **stitches them into a single composite PNG** using Pillow. One composite URL is stored per page per device.
 2. **Vision QA**: `screenshot_reviewer.py` reviews every composite for visual quality (blank frames, loading skeletons, broken device shells) before personas see anything.
 3. **Filter**: Rejected screenshots are marked; their URLs are nullified on findings but the raw `crawledPages` entry is preserved as a last-resort fallback.
 4. **Distribute**: Persona agents receive only the composites matching their `deviceType`.
@@ -147,6 +147,8 @@ Findings are mapped to screenshots through a prioritized fallback chain:
 4. `crawledPageKeyToImgUrl[pageKey]` — the first raw crawled screenshot for that page (last resort)
 
 The last-resort fallback is important because the screenshot reviewer nullifies both `finding.screenshotUrl` and the matching `pageScreenshots` entry when it rejects a screenshot. Without step 4, those findings would be silently dropped and the screenshot would render with no persona quotes at all. The raw `crawledPages` data is never filtered by the reviewer, so it always provides a stable fallback image for the correct page.
+
+There is now an additional guardrail on top of that mapping chain: only image-like URLs are allowed to flow through the screenshot pipeline. If a finding contains a page URL such as `https://example.com/about` instead of a Firebase image URL, the backend and frontend both reject it as screenshot evidence rather than trying to render a webpage as an `<img>`.
 
 ### Screenshot Review Rules
 The dedicated screenshot reviewer is intentionally stricter than the browsing agents. It approves screenshots only when they are presentation-safe evidence:
@@ -600,6 +602,18 @@ Two new evaluation categories were also added to the system instruction: **conte
 
 **The Fix:** Filter `crawler_*` reports out of the `screenshotGroups` persona-report loop. The crawler's composites still render correctly via `crawledPages`. The `shot_` files continue to serve the Live Agent Feeds tab for real-time progress display — they just no longer pollute the Screenshots tab.
 
+### Mar 16, 2026 — Page URLs Were Polluting `screenshotUrl`
+**The Problem:** Some audits started showing broken image boxes in multiple places: the Screenshots tab, the live "Agent view" card, and the founder presentation. In the worst cases, a slide would link to `https://site.com/about` instead of a Firebase Storage image.
+
+**Root Cause:** `native_persona.py` asked the model to provide `screenshot_url`, but the runtime trusted any non-empty string returned by the model. In some runs the model supplied the page URL instead of the actual screenshot URL. That invalid value was written to `finding.screenshotUrl` in Firestore, then reused by `audit_recap.py` and `audit/[auditId]/page.tsx`, both of which previously assumed any non-empty `screenshotUrl` was safe to render as an image.
+
+**The Fix:** Three layers of protection now exist:
+- `native_persona.py` accepts a model-provided `screenshot_url` only if it matches one of the actual crawled screenshot URLs for the audit.
+- `audit_recap.py` ignores non-image-like URLs when selecting evidence screenshots for presentation slides.
+- `audit/[auditId]/page.tsx` now validates image URLs before rendering them in both the presentation and screenshot-group UIs, so old polluted audit records degrade safely instead of showing broken `<img>` elements.
+
+**Resulting Rule:** A screenshot URL is valid evidence only if it is both image-like and part of the audit's real captured screenshot set.
+
 ### Mar 16, 2026 — Composite Screenshots Eliminate Finding-to-Image Mismatch
 **The Problem:** The crawler stored 3 separate scrolled screenshots for the homepage and 2 for each subpage. All shared the same `page_url`. When the persona agent called `log_issue`, it needed to cite the exact Firebase Storage token URL for whichever scroll frame its observation came from. The model almost never recalled the correct token, causing all findings for a page to pile up on the first screenshot URL and leaving the others blank in the UI.
 
@@ -609,3 +623,10 @@ Two new evaluation categories were also added to the system instruction: **conte
 - Subpage composites: 2 frames — 1280×1600 desktop, 390×1688 mobile
 - After capture, the driver scrolls back to top so subsequent page navigation is unaffected
 - `Pillow` added to `requirements.txt`
+
+### Mar 16, 2026 — Composite Capture Now Scrolls To Footer
+**The Problem:** Even after moving to composite screenshots, long pages could still be truncated because the crawler used a fixed frame budget: 3 viewport captures for the homepage and 2 for subpages. Many real marketing sites are much taller than that, so screenshot evidence still missed lower sections and the footer.
+
+**The Fix:** `_capture_page_screenshots()` in `crawler.py` now measures `scrollY`, `innerHeight`, `scrollHeight`, and the footer position on each capture loop. It keeps scrolling and capturing until the visible viewport reaches the footer or the true page bottom, with a hard cap of 7 frames to avoid runaway capture time.
+
+**Resulting Rule:** Screenshot capture should be content-aware, not based on a tiny fixed frame count. One composite per page is still the storage model, but the composite should reach the footer whenever the page allows it.

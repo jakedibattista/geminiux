@@ -140,6 +140,20 @@ function normalizePageKey(pageUrl?: string | null): string | null {
   }
 }
 
+function isImageLikeUrl(url?: string | null): boolean {
+  if (!url) return false;
+  const cleaned = url.trim().toLowerCase();
+  if (!cleaned) return false;
+  if (cleaned.startsWith('data:image/')) return true;
+  try {
+    const parsed = new URL(cleaned);
+    const path = decodeURIComponent(parsed.pathname || '').toLowerCase();
+    return ['.png', '.jpg', '.jpeg', '.webp', '.gif'].some(ext => path.includes(ext));
+  } catch {
+    return false;
+  }
+}
+
 function formatCategory(category?: string): string {
   if (!category) return 'Unknown';
   return category.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
@@ -384,6 +398,7 @@ function PresentationTab({ presentation, auditUrl }: { presentation?: Presentati
 
   const safeIndex = Math.min(currentSlideIndex, slides.length - 1);
   const slide = slides[safeIndex];
+  const slideImageUrl = isImageLikeUrl(slide?.screenshotUrl) ? slide.screenshotUrl! : null;
 
   // Auto-play audio when slide changes
   useEffect(() => {
@@ -513,16 +528,16 @@ function PresentationTab({ presentation, auditUrl }: { presentation?: Presentati
         </CardHeader>
         <CardContent className="grid gap-6 lg:grid-cols-[1.25fr_0.75fr]">
           <div className="space-y-3">
-            {slide.screenshotUrl ? (
+            {slideImageUrl ? (
               <a
-                href={slide.screenshotUrl}
+                href={slideImageUrl}
                 target="_blank"
                 rel="noreferrer"
                 className="block rounded-2xl border overflow-hidden bg-muted/20 shadow-sm"
               >
                 <div className="flex items-center justify-center bg-muted/10 p-3">
                   <img
-                    src={slide.screenshotUrl}
+                    src={slideImageUrl}
                     alt={slide.title}
                     className="w-full h-auto max-h-[520px] object-contain object-top bg-white"
                   />
@@ -544,7 +559,7 @@ function PresentationTab({ presentation, auditUrl }: { presentation?: Presentati
               </div>
             )}
             <p className="text-xs text-muted-foreground">
-              {slide.screenshotUrl ? 'Grounded in a real screenshot captured during the audit.' : 'Visual summary generated from the audit findings.'}
+              {slideImageUrl ? 'Grounded in a real screenshot captured during the audit.' : 'Visual summary generated from the audit findings.'}
             </p>
           </div>
 
@@ -787,7 +802,7 @@ export default function AuditPage({ params }: { params: Promise<{ auditId: strin
         const mobileShots = (p as any).mobile_screenshots || [];
 
         desktopShots.forEach((imgUrl: string) => {
-          if (!imgUrl) return;
+          if (!isImageLikeUrl(imgUrl)) return;
           const normalizedPageKey = normalizePageKey(p.url) || p.url;
           if (!pageMap.has(imgUrl)) {
             pageMap.set(imgUrl, {
@@ -801,7 +816,7 @@ export default function AuditPage({ params }: { params: Promise<{ auditId: strin
         });
 
         mobileShots.forEach((imgUrl: string) => {
-          if (!imgUrl) return;
+          if (!isImageLikeUrl(imgUrl)) return;
           const normalizedPageKey = normalizePageKey(p.url) || p.url;
           if (!pageMap.has(imgUrl)) {
             pageMap.set(imgUrl, {
@@ -826,7 +841,7 @@ export default function AuditPage({ params }: { params: Promise<{ auditId: strin
         if (!crawledPageKeyToImgUrl.has(normalizedPageKey)) {
           const desktopShots = (p as any).desktop_screenshots || p.screenshots || [];
           const mobileShots = (p as any).mobile_screenshots || [];
-          const firstShot = desktopShots[0] || mobileShots[0];
+          const firstShot = [...desktopShots, ...mobileShots].find((url: string) => isImageLikeUrl(url));
           if (firstShot) crawledPageKeyToImgUrl.set(normalizedPageKey, firstShot);
         }
       });
@@ -849,7 +864,7 @@ export default function AuditPage({ params }: { params: Promise<{ auditId: strin
       // 1. Collect all screenshots from the report's page screenshots map
       if (report.pageScreenshots) {
         Object.entries(report.pageScreenshots).forEach(([storedPageKey, imgUrl]) => {
-          if (!imgUrl) return;
+          if (!isImageLikeUrl(imgUrl)) return;
           const normalizedPageKey = normalizePageKey(storedPageKey) || storedPageKey;
           
           const existing = pageMap.get(imgUrl);
@@ -870,7 +885,7 @@ export default function AuditPage({ params }: { params: Promise<{ auditId: strin
       }
 
       // 2. Also consider the latest screenshot
-      if (report.latestScreenshot && report.latestScreenshotPage) {
+      if (isImageLikeUrl(report.latestScreenshot) && report.latestScreenshotPage) {
         const imgUrl = report.latestScreenshot;
         const existing = pageMap.get(imgUrl);
         if (!existing) {
@@ -893,14 +908,22 @@ export default function AuditPage({ params }: { params: Promise<{ auditId: strin
 
         const findingScreenshot = getFindingScreenshot(finding);
         const findingPageUrl = getFindingPageUrl(finding) || pageKey;
+        const pageScreenshot = report.pageScreenshots && isImageLikeUrl(report.pageScreenshots[pageKey])
+          ? report.pageScreenshots[pageKey]
+          : null;
+        const latestScreenshotForPage = report.latestScreenshotPage &&
+          normalizePageKey(report.latestScreenshotPage) === pageKey &&
+          isImageLikeUrl(report.latestScreenshot)
+          ? report.latestScreenshot
+          : null;
         
         // Use the finding's specific screenshot, or fallback to the one we have for this page.
         // If the screenshot reviewer rejected the finding's screenshot AND filtered it from
         // pageScreenshots, fall back to any crawled screenshot for the same page so the
         // finding's quote still appears on screen.
-        const imgUrl = findingScreenshot || 
-          (report.pageScreenshots && report.pageScreenshots[pageKey]) || 
-          (report.latestScreenshotPage && normalizePageKey(report.latestScreenshotPage) === pageKey ? report.latestScreenshot : null) ||
+        const imgUrl = (isImageLikeUrl(findingScreenshot) ? findingScreenshot : null) || 
+          pageScreenshot || 
+          latestScreenshotForPage ||
           crawledPageKeyToImgUrl.get(pageKey) ||
           null;
 

@@ -64,24 +64,77 @@ async def _capture_page_screenshots(
     audit_id: str,
     url: str,
     label: str,
-    scroll_count: int,
+    max_frames: int,
 ) -> list[str]:
     """
-    Capture `scroll_count` viewport frames while scrolling down the page,
-    stitch them into a single composite image, and return a list with that
-    one URL.  One URL per page means the persona agent can always cite it
-    correctly — eliminating the multi-URL mismatch bug.
+    Capture enough viewport frames to reach the footer or page bottom, up to
+    `max_frames`, then stitch them into a single composite image.
     """
     frames: list[bytes] = []
-    for i in range(scroll_count):
+    try:
+        await driver.page.evaluate("() => window.scrollTo(0, 0)")
+        await asyncio.sleep(0.5)
+    except Exception:
+        pass
+
+    last_scroll_y = -1
+    for i in range(max_frames):
         try:
             png_bytes = await driver.page.screenshot(type="png", full_page=False, timeout=15000)
             frames.append(png_bytes)
         except Exception as e:
             print(f"[Crawler {audit_id}] Frame capture error on {url} (frame {i + 1}): {e}")
-        if i < scroll_count - 1:
-            await driver.scroll("down")
+
+        try:
+            metrics = await driver.page.evaluate(
+                """() => {
+                    const doc = document.documentElement;
+                    const body = document.body;
+                    const footer = document.querySelector('footer');
+                    const scrollY = window.scrollY;
+                    const viewportHeight = window.innerHeight;
+                    const scrollHeight = Math.max(
+                        doc?.scrollHeight || 0,
+                        body?.scrollHeight || 0,
+                        doc?.offsetHeight || 0,
+                        body?.offsetHeight || 0
+                    );
+                    const footerBottom = footer
+                        ? (footer.getBoundingClientRect().bottom + window.scrollY)
+                        : null;
+                    return { scrollY, viewportHeight, scrollHeight, footerBottom };
+                }"""
+            )
+        except Exception as e:
+            print(f"[Crawler {audit_id}] Failed to read page metrics on {url}: {e}")
+            break
+
+        scroll_y = int(metrics.get("scrollY") or 0)
+        viewport_height = max(1, int(metrics.get("viewportHeight") or 1))
+        scroll_height = max(viewport_height, int(metrics.get("scrollHeight") or viewport_height))
+        footer_bottom = metrics.get("footerBottom")
+        footer_target = int(footer_bottom) if isinstance(footer_bottom, (int, float)) else scroll_height
+        visible_bottom = scroll_y + viewport_height
+        reached_footer = visible_bottom >= footer_target - 24
+        reached_bottom = visible_bottom >= scroll_height - 24
+
+        if reached_footer or reached_bottom:
+            break
+
+        next_scroll_y = min(
+            scroll_y + max(1, int(viewport_height * 0.85)),
+            max(0, scroll_height - viewport_height),
+        )
+        if next_scroll_y <= scroll_y or next_scroll_y == last_scroll_y:
+            break
+
+        try:
+            await driver.page.evaluate("(y) => window.scrollTo(0, y)", next_scroll_y)
+            last_scroll_y = next_scroll_y
             await asyncio.sleep(1)
+        except Exception as e:
+            print(f"[Crawler {audit_id}] Scroll error on {url} (frame {i + 1}): {e}")
+            break
 
     # Scroll back to top so nav-link extraction and next-page navigation aren't
     # affected by a stale scroll position.
@@ -126,8 +179,8 @@ async def run_crawler_agent(audit_id: str, target_url: str, auth: dict = None):
         desktop_state = await desktop_driver.get_state()
         homepage_url = desktop_state["url"]
 
-        desktop_homepage_shots_task = _capture_page_screenshots(desktop_driver, audit_id, homepage_url, "Homepage", 3)
-        mobile_homepage_shots_task = _capture_page_screenshots(mobile_driver, audit_id, homepage_url, "Homepage", 3)
+        desktop_homepage_shots_task = _capture_page_screenshots(desktop_driver, audit_id, homepage_url, "Homepage", 7)
+        mobile_homepage_shots_task = _capture_page_screenshots(mobile_driver, audit_id, homepage_url, "Homepage", 7)
 
         desktop_homepage_shots, mobile_homepage_shots = await asyncio.gather(
             desktop_homepage_shots_task, mobile_homepage_shots_task
@@ -160,8 +213,8 @@ async def run_crawler_agent(audit_id: str, target_url: str, auth: dict = None):
             await asyncio.gather(desktop_driver.navigate(url), mobile_driver.navigate(url))
             await asyncio.sleep(2)
 
-            desktop_sub_task = _capture_page_screenshots(desktop_driver, audit_id, url, "Subpage", 2)
-            mobile_sub_task = _capture_page_screenshots(mobile_driver, audit_id, url, "Subpage", 2)
+            desktop_sub_task = _capture_page_screenshots(desktop_driver, audit_id, url, "Subpage", 7)
+            mobile_sub_task = _capture_page_screenshots(mobile_driver, audit_id, url, "Subpage", 7)
 
             desktop_sub_shots, mobile_sub_shots = await asyncio.gather(desktop_sub_task, mobile_sub_task)
 

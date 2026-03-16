@@ -5,6 +5,7 @@ import time
 import traceback
 import mimetypes
 import urllib.request
+from urllib.parse import urlparse, unquote
 from typing import Any
 
 import firebase_admin
@@ -51,6 +52,23 @@ def normalize_persona_quote(text: str) -> str:
     if text.startswith('"') and text.endswith('"'):
         text = text[1:-1].strip()
     return text
+
+
+def _looks_like_image_url(url: str | None) -> bool:
+    if not isinstance(url, str):
+        return False
+    cleaned = url.strip()
+    if not cleaned:
+        return False
+    lowered = cleaned.lower()
+    if lowered.startswith("data:image/"):
+        return True
+    try:
+        parsed = urlparse(cleaned)
+    except Exception:
+        return False
+    path = unquote(parsed.path or "").lower()
+    return any(ext in path for ext in (".png", ".jpg", ".jpeg", ".webp", ".gif"))
 
 def report_finding(
     audit_id: str,
@@ -165,6 +183,7 @@ async def run_persona_agent(persona_id: str, audit_id: str, target_url: str, cra
             # Fallback to 'screenshots' if device-specific ones aren't found
             urls = page.get(screenshot_key, page.get("screenshots", []))
             all_screenshot_urls.extend(urls)
+        valid_screenshot_urls = {url for url in all_screenshot_urls if _looks_like_image_url(url)}
         
         async def _download_screenshot_part(url: str) -> tuple[str, types.Part]:
             def _download():
@@ -272,8 +291,8 @@ async def run_persona_agent(persona_id: str, audit_id: str, target_url: str, cra
                     if sentiment not in ALLOWED_FINDING_SENTIMENTS:
                         sentiment = None
 
-                    # Use the explicit screenshot URL if it's not empty, otherwise pick the first one from the target page
-                    resolved_screenshot_url = screenshot_url
+                    # Only trust screenshot URLs that match the actual crawled screenshot payload.
+                    resolved_screenshot_url = screenshot_url if screenshot_url in valid_screenshot_urls else None
                     if not resolved_screenshot_url:
                         for p in crawled_pages:
                             # Use device-specific screenshots if available

@@ -8,7 +8,7 @@ import urllib.parse
 import uuid
 import wave
 import json
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 
 import firebase_admin
 from firebase_admin import firestore, storage
@@ -87,6 +87,21 @@ def _clean_line(text: str | None) -> str:
     return " ".join(text.strip().split())
 
 
+def _is_image_like_url(url: str | None) -> bool:
+    cleaned = _clean_line(url)
+    if not cleaned:
+        return False
+    lowered = cleaned.lower()
+    if lowered.startswith("data:image/"):
+        return True
+    try:
+        parsed = urlparse(cleaned)
+    except Exception:
+        return False
+    path = unquote(parsed.path or "").lower()
+    return any(ext in path for ext in (".png", ".jpg", ".jpeg", ".webp", ".gif"))
+
+
 def _friendly_site_name(audit_url: str) -> str:
     hostname = urlparse(audit_url).hostname or audit_url
     hostname = hostname.removeprefix("www.")
@@ -98,7 +113,7 @@ def _friendly_site_name(audit_url: str) -> str:
 
 def _finding_has_approved_screenshot(finding: dict) -> bool:
     screenshot_url = _clean_line((finding or {}).get("screenshotUrl"))
-    if not screenshot_url:
+    if not screenshot_url or not _is_image_like_url(screenshot_url):
         return False
 
     review = (finding or {}).get("screenshotReview")
@@ -355,12 +370,12 @@ def _attach_supporting_screenshots(slides: list[dict], persona_reports: dict) ->
         # Get screenshots from the page map
         for url in (report.get("pageScreenshots", {}) or {}).values():
             u = _clean_line(url)
-            if u and u not in seen_raw:
+            if _is_image_like_url(u) and u not in seen_raw:
                 all_raw_screenshots.append(u)
                 seen_raw.add(u)
         # Get latest screenshot
         u_latest = _clean_line(report.get("latestScreenshot"))
-        if u_latest and u_latest not in seen_raw:
+        if _is_image_like_url(u_latest) and u_latest not in seen_raw:
             all_raw_screenshots.append(u_latest)
             seen_raw.add(u_latest)
 
@@ -373,7 +388,7 @@ def _attach_supporting_screenshots(slides: list[dict], persona_reports: dict) ->
                 if not isinstance(finding, dict):
                     continue
                 u = _clean_line(finding.get("screenshotUrl"))
-                if u and u not in seen_raw:
+                if _is_image_like_url(u) and u not in seen_raw:
                     all_raw_screenshots.append(u)
                     seen_raw.add(u)
 
@@ -384,6 +399,8 @@ def _attach_supporting_screenshots(slides: list[dict], persona_reports: dict) ->
 
     for slide in slides:
         existing_url = _clean_line(slide.get("screenshotUrl"))
+        if existing_url and not _is_image_like_url(existing_url):
+            existing_url = ""
         if existing_url and existing_url not in used_urls:
             used_urls.add(existing_url)
             enriched.append(slide)
@@ -406,7 +423,7 @@ def _attach_supporting_screenshots(slides: list[dict], persona_reports: dict) ->
                 c = supporting[evidence_index]
                 evidence_index += 1
                 u = _clean_line(c.get("screenshotUrl"))
-                if u and u not in used_urls:
+                if _is_image_like_url(u) and u not in used_urls:
                     candidate_url = u
                     candidate_persona = c.get("personaName")
                     candidate_page_url = c.get("pageUrl")
@@ -418,7 +435,8 @@ def _attach_supporting_screenshots(slides: list[dict], persona_reports: dict) ->
             ranked = sorted(
                 [
                     finding for finding in supporting
-                    if _clean_line(finding.get("screenshotUrl")) not in used_urls
+                    if _is_image_like_url(_clean_line(finding.get("screenshotUrl")))
+                    and _clean_line(finding.get("screenshotUrl")) not in used_urls
                 ],
                 key=lambda finding: (
                     _score_supporting_finding_for_slide(slide, finding),
@@ -436,7 +454,8 @@ def _attach_supporting_screenshots(slides: list[dict], persona_reports: dict) ->
         if not candidate_url and supporting:
             unused_supporting = [
                 f for f in supporting
-                if _clean_line(f.get("screenshotUrl")) not in used_urls
+                if _is_image_like_url(_clean_line(f.get("screenshotUrl")))
+                and _clean_line(f.get("screenshotUrl")) not in used_urls
             ]
             if unused_supporting:
                 c = unused_supporting[0]
