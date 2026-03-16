@@ -41,40 +41,49 @@ export async function POST(request: Request) {
       updatedAt: now,
     });
 
-    // 4. Fire and forget to Cloud Run agent backend
+    // 4. Trigger the Cloud Run agent backend.
+    // Cloud Run returns immediately with {"status": "accepted"} and runs the audit
+    // as a background task, so awaiting this adds only ~200ms of latency.
+    // Previously this was fire-and-forget, but Vercel terminates serverless functions
+    // as soon as a response is returned, which abandoned the fetch before it completed.
     const cloudRunUrl = process.env.AGENT_BACKEND_URL;
     const apiSecret = process.env.AGENT_API_SECRET;
 
     if (cloudRunUrl) {
-      // Don't await this fetch, let it run in the background
-      fetch(`${cloudRunUrl}/api/run_audit`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Api-Secret': apiSecret || '',
-        },
-        body: JSON.stringify({
-          auditId,
-          url,
-          personaIds,
-          userId,
-          customPersonas,
-          ...(loginUrl && loginEmail && loginPassword ? { loginUrl, loginEmail, loginPassword } : {}),
-        }),
-      }).catch(err => {
+      try {
+        const triggerRes = await fetch(`${cloudRunUrl}/api/run_audit`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Api-Secret': apiSecret || '',
+          },
+          body: JSON.stringify({
+            auditId,
+            url,
+            personaIds,
+            userId,
+            customPersonas,
+            ...(loginUrl && loginEmail && loginPassword ? { loginUrl, loginEmail, loginPassword } : {}),
+          }),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!triggerRes.ok) {
+          throw new Error(`Cloud Run responded with ${triggerRes.status}`);
+        }
+      } catch (err) {
         console.error('Failed to trigger Cloud Run agent backend:', err);
-        // We could update the audit status to 'error' here if we wanted
-        adminDb.collection('audits').doc(auditId).update({
+        await adminDb.collection('audits').doc(auditId).update({
           status: 'error',
           errorMsg: 'Failed to connect to agent backend',
-          updatedAt: new Date().toISOString()
-        }).catch(console.error);
-      });
+          updatedAt: new Date().toISOString(),
+        });
+        return NextResponse.json({ error: 'Agent backend unavailable' }, { status: 502 });
+      }
     } else {
       console.warn('AGENT_BACKEND_URL is not set. Agents will not be triggered.');
     }
 
-    // 5. Return success immediately
+    // 5. Return success once backend has accepted the job
     return NextResponse.json({ success: true, auditId });
   } catch (error) {
     console.error('Error starting audit:', error);

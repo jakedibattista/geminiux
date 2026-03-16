@@ -2,6 +2,8 @@
 # This avoids apt-get failures for font packages that don't exist on newer Debian.
 FROM mcr.microsoft.com/playwright/python:v1.52.0-jammy
 
+ENV PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
 COPY requirements.txt .
