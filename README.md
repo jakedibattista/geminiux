@@ -6,6 +6,20 @@ AuditMySite is an open-source web app that runs multiple AI personas against any
 
 ---
 
+## Try the Live App
+
+**No setup required.** The app is fully deployed and running.
+
+1. Go to **[geminiux-buddy-tech.vercel.app](https://geminiux-buddy-tech.vercel.app)**
+2. Create a free account (email + password)
+3. Paste any public URL — try your own site, or use `https://stripe.com` or `https://linear.app` as a demo
+4. Select one or more personas and click **Start Audit**
+5. Watch findings stream in live (~90 seconds end-to-end), then review the consolidated report and narrated presentation
+
+> The backend runs on Cloud Run with `--min-instances 1` so there's no cold start delay.
+
+---
+
 ## How It Works
 
 1. **Crawl** — A dedicated Playwright crawler visits the site on both desktop (1280×800) and mobile (390×844), capturing composite scroll screenshots of the homepage and top navigation pages.
