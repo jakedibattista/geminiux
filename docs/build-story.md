@@ -417,6 +417,21 @@ The "almost" is doing a lot of work. It's honest about what AI simulation can an
 
 ---
 
+## Post-Submission Bugs Found and Fixed
+
+After the initial submission and live testing, a few real bugs surfaced:
+
+**Silent backend trigger failure (Vercel serverless)**  
+The `POST /api/audit/start` route was calling `fetch(cloudRunUrl)` without `await`. Vercel's serverless functions terminate as soon as a response is returned, killing any unawaited Promises. Audits stuck at `pending` forever because Cloud Run was never actually reached. Fix: changed to `await fetch(...)` with a 10-second `AbortSignal.timeout` and proper `try/catch` that updates Firestore to `status: error` and returns a `502` if the backend can't be reached.
+
+**Python stdout buffering hid Cloud Run logs**  
+`print()` statements from the Python backend weren't showing up in Cloud Run logs during live runs. Python buffers stdout by default when not attached to a TTY. Fix: added `ENV PYTHONUNBUFFERED=1` to the `Dockerfile`.
+
+**Duplicate screenshot cards in the Screenshots tab**  
+The `BrowserDriver` (used internally by the crawler) calls `create_screenshot_upload()` on every page navigation, writing individual `shot_TIMESTAMP.png` files to `agentReports/crawler_desktop.latestScreenshot` and `agentReports/crawler_mobile.latestScreenshot`. These `shot_` URLs are different from the stitched `composite_TIMESTAMP.png` URLs stored in `crawledPages`. The frontend `screenshotGroups` useMemo processed all persona reports — including `crawler_desktop` and `crawler_mobile` — and created a new card for each unrecognized `latestScreenshot` URL. This caused the last page visited by the crawler to appear twice in the Screenshots tab (one individual `shot_` card, one composite card). Fix: filter `crawler_*` reports out of the `screenshotGroups` loop. The crawler's composites still render correctly via `crawledPages`.
+
+---
+
 ## What's Next
 
 The hackathon submission is in. Whether it places or not, the thing I built is real, works on real websites, and tells you something genuinely useful that you didn't know before you ran it.
