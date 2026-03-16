@@ -204,9 +204,20 @@ class BrowserDriver:
         await asyncio.sleep(0.5)
         
         url = self.page.url
-        screenshot_bytes = await self.page.screenshot(type="png", full_page=False, timeout=15000)
-        scroll_y = await self.page.evaluate("() => window.scrollY")
-        viewport_height = await self.page.evaluate("() => window.innerHeight")
+        try:
+            screenshot_bytes = await self.page.screenshot(type="png", full_page=False, timeout=15000)
+        except Exception as e:
+            print(f"[{self.persona_id}] Error taking state screenshot: {e}")
+            screenshot_bytes = b""
+            
+        try:
+            scroll_y = await self.page.evaluate("() => window.scrollY")
+        except: scroll_y = 0
+        
+        try:
+            viewport_height = await self.page.evaluate("() => window.innerHeight")
+        except: viewport_height = 800
+        
         text = await self._get_clean_text()
         media_state = await self._get_visible_media_state()
         return {
