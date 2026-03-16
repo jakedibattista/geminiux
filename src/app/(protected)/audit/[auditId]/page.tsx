@@ -832,8 +832,11 @@ export default function AuditPage({ params }: { params: Promise<{ auditId: strin
       });
     }
 
-    // 2. Add/enrich with persona-specific reports
-    personaReports.forEach(report => {
+    // 2. Add/enrich with persona-specific reports.
+    // Exclude crawler agents — their latestScreenshot values are live-feed
+    // shot_ artifacts that differ from the canonical composite URLs in
+    // crawledPages and would otherwise create duplicate cards.
+    personaReports.filter(r => !r.id.startsWith('crawler_')).forEach(report => {
       const name = PERSONA_DISPLAY_NAMES[report.id] ||
         audit.customPersonas?.find(p => p.id === report.id)?.name ||
         report.personaName || report.id;
