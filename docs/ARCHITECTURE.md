@@ -335,7 +335,12 @@ AGENT_API_SECRET=...        # Must match frontend
 
 ---
 
-## Current Status (as of Mar 16, 2026)
+## Current Status (as of Apr 24, 2026)
+
+### Project Sunset
+The Cloud Run backend has been decommissioned. The app is no longer accepting new audits. The Vercel frontend now serves a static sunset landing page. See `README.md` for the wind-down commands used to delete the Cloud Run service, container images, and secrets.
+
+### Status as of Mar 16, 2026 (final working state)
 
 ### Working
 - Full audit pipeline: persona selection → Playwright browsing → findings streaming → consolidation → report display

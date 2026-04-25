@@ -1,24 +1,12 @@
 # AuditMySite — Real Feedback from Almost Real Users
 
-AuditMySite is an open-source web app that runs multiple AI personas against any URL and returns a live UX audit with a score, findings, recommendations, and a narrated slide presentation. Built for the [Gemini Live Agent Challenge](https://ai.google.dev/) (Track 3: UI Navigator).
+> **This project has been sunset.** The Cloud Run backend has been decommissioned and the app is no longer accepting new audits. The source code remains available here for reference.
+
+AuditMySite is an open-source web app that ran multiple AI personas against any URL and returned a live UX audit with a score, findings, recommendations, and a narrated slide presentation. Built for the [Gemini Live Agent Challenge](https://ai.google.dev/) (Track 3: UI Navigator).
 
 **[Read the build story →](docs/build-story.md)**
 
----
-
-## Try the Live App
-
 **🎥 [Watch the demo →](https://youtu.be/VstSF9ii0cU)**
-
-**No setup required.** The app is fully deployed and running.
-
-1. Go to **[geminiux.vercel.app](https://geminiux.vercel.app)** (also available at `geminiux-buddy-tech.vercel.app`)
-2. Create a free account (email + password)
-3. Paste any public URL — try your own site, or use `https://stripe.com` or `https://linear.app` as a demo
-4. Select one or more personas and click **Start Audit**
-5. Watch findings stream in live (~90 seconds end-to-end), then review the consolidated report and narrated presentation
-
-> The backend runs on Cloud Run with `--min-instances 1` so there's no cold start delay.
 
 ---
 
@@ -156,15 +144,20 @@ service firebase.storage {
 
 ---
 
-## Deploying to Production
+## Deploying to Production (Historical Reference)
 
-Live deployment (reference):
+> **Note:** The production backend has been decommissioned. These instructions are preserved for reference only.
+
+<details>
+<summary>Original deployment steps</summary>
+
+Live deployment (when active):
 - **Frontend:** https://geminiux.vercel.app
 - **Frontend alias:** https://geminiux-buddy-tech.vercel.app
-- **Backend:** https://audit-agent-403481904256.us-central1.run.app
+- **Backend (decommissioned):** https://audit-agent-403481904256.us-central1.run.app
 - **Repo:** https://github.com/jakedibattista/geminiux
 
-### Step 1 — Enable GCP APIs
+#### Step 1 — Enable GCP APIs
 
 Do this once per project:
 ```bash
@@ -176,14 +169,14 @@ gcloud services enable \
   --project YOUR_PROJECT_ID
 ```
 
-### Step 2 — Create secrets
+#### Step 2 — Create secrets
 
 ```bash
 echo -n "your-gemini-key" | gcloud secrets create gemini-api-key --data-file=- --project YOUR_PROJECT_ID
 echo -n "your-api-secret" | gcloud secrets create agent-api-secret --data-file=- --project YOUR_PROJECT_ID
 ```
 
-### Step 3 — Build and deploy the agent backend (Cloud Run)
+#### Step 3 — Build and deploy the agent backend (Cloud Run)
 
 Always pass `--project` explicitly — your default `gcloud` project may differ from your Firebase project.
 
@@ -192,7 +185,6 @@ cd agent-backend
 
 gcloud builds submit --tag gcr.io/YOUR_PROJECT_ID/audit-agent --project YOUR_PROJECT_ID
 
-# Deploy with ALLOWED_ORIGINS=* initially; update after you have the Vercel URL
 gcloud run deploy audit-agent \
   --image gcr.io/YOUR_PROJECT_ID/audit-agent \
   --platform managed \
@@ -207,7 +199,7 @@ gcloud run deploy audit-agent \
   --set-secrets "GEMINI_API_KEY=gemini-api-key:latest,AGENT_API_SECRET=agent-api-secret:latest"
 ```
 
-### Step 4 — Grant IAM permissions
+#### Step 4 — Grant IAM permissions
 
 The Cloud Run default service account (`PROJECT_NUMBER-compute@developer.gserviceaccount.com`) needs:
 
@@ -215,13 +207,11 @@ The Cloud Run default service account (`PROJECT_NUMBER-compute@developer.gservic
 SA="PROJECT_NUMBER-compute@developer.gserviceaccount.com"
 PROJECT="YOUR_PROJECT_ID"
 
-# Access to secrets
 gcloud secrets add-iam-policy-binding gemini-api-key \
   --member="serviceAccount:$SA" --role="roles/secretmanager.secretAccessor" --project $PROJECT
 gcloud secrets add-iam-policy-binding agent-api-secret \
   --member="serviceAccount:$SA" --role="roles/secretmanager.secretAccessor" --project $PROJECT
 
-# Firebase and Vertex AI access
 gcloud projects add-iam-policy-binding $PROJECT \
   --member="serviceAccount:$SA" --role="roles/datastore.user"
 gcloud projects add-iam-policy-binding $PROJECT \
@@ -230,32 +220,41 @@ gcloud projects add-iam-policy-binding $PROJECT \
   --member="serviceAccount:$SA" --role="roles/aiplatform.user"
 ```
 
-Key settings:
-- `--min-instances 1` — audits run as FastAPI `BackgroundTask` after the HTTP response returns. If Cloud Run scales to zero mid-audit, the container is killed. `min-instances 1` prevents this.
-- `--memory 2Gi` — minimum for Playwright + Chromium. Use 4 GiB if you see OOM crashes.
-- The 300s default request timeout is fine — `/api/run_audit` returns 202 immediately.
-
-### Step 5 — Deploy the frontend (Vercel)
+#### Step 5 — Deploy the frontend (Vercel)
 
 1. Push to GitHub
 2. Go to [vercel.com](https://vercel.com) → **Add New Project** → import your repo
 3. Add all variables from `.env.local.example` in Vercel project settings
 4. Set `AGENT_BACKEND_URL` to your Cloud Run URL
-5. Deploy → get your Vercel URL → lock down CORS on Cloud Run:
+5. Deploy
+
+</details>
+
+---
+
+## Cloud Run Wind-Down
+
+To fully decommission the Cloud Run backend and eliminate ongoing costs, run these commands:
 
 ```bash
-gcloud run services update audit-agent \
-  --region us-central1 --project YOUR_PROJECT_ID \
-  --update-env-vars "ALLOWED_ORIGINS=https://your-app.vercel.app"
+# 1. Delete the Cloud Run service (stops all billing for compute)
+gcloud run services delete audit-agent \
+  --region us-central1 \
+  --project auditmysite-61bd1 \
+  --quiet
+
+# 2. Delete the container image from Container Registry (saves storage costs)
+gcloud container images delete gcr.io/auditmysite-61bd1/audit-agent \
+  --force-delete-tags \
+  --project auditmysite-61bd1 \
+  --quiet
+
+# 3. (Optional) Delete secrets if no longer needed
+gcloud secrets delete gemini-api-key --project auditmysite-61bd1 --quiet
+gcloud secrets delete agent-api-secret --project auditmysite-61bd1 --quiet
 ```
 
-If you use multiple production aliases, include all of them in `ALLOWED_ORIGINS`, for example:
-
-```bash
-gcloud run services update audit-agent \
-  --region us-central1 --project YOUR_PROJECT_ID \
-  --update-env-vars '^@^ALLOWED_ORIGINS=https://your-app.vercel.app,https://your-app-team.vercel.app'
-```
+After running these commands, your Cloud Run costs will drop to $0. The Vercel frontend (free tier) will continue to serve the sunset landing page at no cost.
 
 ---
 

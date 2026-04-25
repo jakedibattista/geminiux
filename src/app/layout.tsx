@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AuditMySite — Real Feedback from Almost Real Users",
-  description: "Automated UX auditing using multiple AI personas. Paste a URL, pick your personas, get a scored report and narrated presentation.",
+  title: "AuditMySite — Project Sunset",
+  description: "AuditMySite has been sunset. The source code is available on GitHub.",
 };
 
 export default function RootLayout({
